@@ -1,0 +1,136 @@
+.settings-page {
+  flex: 1;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.settings-content {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+
+.settings-title {
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 24px;
+  color: var(--text);
+}
+
+.settings-section {
+  margin-bottom: 28px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-section:last-of-type {
+  border-bottom: none;
+}
+
+.settings-section-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 14px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.settings-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.settings-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.settings-select,
+.settings-input,
+.settings-textarea {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.settings-select:focus,
+.settings-input:focus,
+.settings-textarea:focus {
+  border-color: var(--accent);
+}
+
+.settings-input-short {
+  max-width: 160px;
+}
+
+.settings-textarea {
+  resize: vertical;
+  min-height: 80px;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.settings-radio-group {
+  display: flex;
+  gap: 16px;
+}
+
+.settings-radio {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.settings-radio input {
+  accent-color: var(--accent);
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.settings-save-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 10px 24px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.settings-save-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.settings-save-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-saved {
+  font-size: 0.85rem;
+  color: #3a8a3b;
+  font-weight: 500;
+}

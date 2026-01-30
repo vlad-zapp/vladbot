@@ -1,0 +1,235 @@
+/* Tool Tester */
+.tool-tester {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.tool-tester-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+
+.tool-tester-form {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 0 1 auto;
+  max-height: 60%;
+  min-height: 0;
+}
+
+.tool-tester-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.tool-tester-header .tool-param-label {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.tool-description {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-height: 80px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.tool-select {
+  width: 100%;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 0.9rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tool-params {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+
+.tool-param-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.tool-param-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  line-height: 1.4;
+}
+
+.tool-param-input,
+.tool-param-select {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.tool-param-input:focus,
+.tool-param-select:focus,
+.tool-param-textarea:focus {
+  border-color: var(--accent);
+}
+
+.tool-param-textarea {
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.tool-execute-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  align-self: flex-end;
+}
+
+.tool-execute-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.tool-execute-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Result panel */
+.tool-result-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.tool-result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.tool-result-clear {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius);
+}
+
+.tool-result-clear:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.tool-result {
+  flex: 1;
+  margin: 0;
+  padding: 16px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-y: auto;
+}
+
+.tool-result-error {
+  color: #e87474;
+}
+
+.tool-result-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+/* Desktop: side by side */
+@media (min-width: 900px) {
+  .tool-tester {
+    flex-direction: row;
+  }
+
+  .tool-tester-form {
+    flex: 0 0 auto;
+    width: clamp(320px, 40%, 560px);
+    max-height: none;
+    border-right: 1px solid var(--border);
+  }
+
+  .tool-result-container {
+    border-top: none;
+  }
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .tool-tester-form {
+    padding: 12px;
+  }
+
+  .tool-tester-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .tool-execute-btn {
+    align-self: stretch;
+    min-height: 44px;
+  }
+}

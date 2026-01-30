@@ -1,0 +1,14 @@
+{
+  "name": "vladbot",
+  "private": true,
+  "workspaces": [
+    "packages/shared",
+    "packages/backend",
+    "packages/frontend"
+  ],
+  "scripts": {
+    "dev:backend": "npm run dev -w @vladbot/backend",
+    "dev:frontend": "npm run dev -w @vladbot/frontend",
+    "build": "npm run build -w @vladbot/shared && npm run build -w @vladbot/backend && npm run build -w @vladbot/frontend"
+  }
+}

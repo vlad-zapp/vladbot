@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.tsbuildinfo
+data/
+coverage/
+TODO.md
+CLAUDE.md
