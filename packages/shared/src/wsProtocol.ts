@@ -1,11 +1,9 @@
 import type {
   ChatMessage,
-  ChatRequest,
   MemoryCreateRequest,
   MemoryUpdateRequest,
   SSEEvent,
   ToolCall,
-  ToolDefinition,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -51,7 +49,7 @@ export interface WsMethods {
 
   // Chat
   "chat.stream": {
-    payload: ChatRequest & { sessionId?: string; assistantId?: string };
+    payload: { sessionId: string; assistantId?: string };
     result: {};
   };
   "chat.subscribe": {
@@ -69,15 +67,19 @@ export interface WsMethods {
 
   // Sessions
   "sessions.list": { payload: {}; result: unknown[] };
-  "sessions.create": { payload: { title?: string }; result: unknown };
+  "sessions.create": { payload: { title?: string; model?: string }; result: unknown };
   "sessions.get": { payload: { id: string }; result: unknown };
   "sessions.update": { payload: { id: string; title?: string; autoApprove?: boolean }; result: unknown };
   "sessions.delete": { payload: { id: string }; result: {} };
   "sessions.lastActive.get": { payload: {}; result: { sessionId: string | null } };
   "sessions.lastActive.set": { payload: { sessionId: string }; result: {} };
   "sessions.compact": {
-    payload: { sessionId: string; model: string; provider: string; contextWindow: number };
+    payload: { sessionId: string };
     result: { compactionMessage: ChatMessage; summary: string };
+  };
+  "sessions.switchModel": {
+    payload: { sessionId: string; newModel: string };
+    result: { compacted: boolean; compactionMessage?: ChatMessage };
   };
 
   // Messages
@@ -102,9 +104,6 @@ export interface WsMethods {
     payload: {
       sessionId: string;
       messageId: string;
-      model: string;
-      provider: string;
-      tools?: ToolDefinition[];
     };
     result: {};
   };

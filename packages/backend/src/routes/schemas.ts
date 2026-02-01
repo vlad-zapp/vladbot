@@ -35,21 +35,7 @@ export const toolDefinitionSchema = z.object({
 });
 
 export const chatRequestSchema = z.object({
-  messages: z
-    .array(
-      z.object({
-        role: z.enum(["user", "assistant", "tool", "compaction"]),
-        content: z.string(),
-        images: z.array(z.string()).optional(),
-        toolCalls: z.array(toolCallSchema).optional(),
-        toolResults: z.array(toolResultSchema).optional(),
-      }),
-    )
-    .default([]),
-  model: z.string().min(1),
-  provider: z.string().min(1),
-  tools: z.array(toolDefinitionSchema).optional(),
-  sessionId: z.string().optional(),
+  sessionId: z.string().min(1),
   assistantId: z.string().optional(),
 });
 

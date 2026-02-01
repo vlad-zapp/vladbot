@@ -2,10 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ChatMessage,
   ClassifiedError,
-  ModelInfo,
   SSEEvent,
   ToolCall,
-  ToolDefinition,
   ToolResult,
 } from "@vladbot/shared";
 import type { DebugEntry } from "../services/api.js";
@@ -105,8 +103,6 @@ interface StreamState {
 const DEFAULT_PAGE_SIZE = 30;
 
 export function useChat(
-  selectedModel: ModelInfo | null,
-  toolDefinitions: ToolDefinition[],
   activeSessionId: string | null,
   onEnsureSession: (title?: string) => Promise<string>,
   onUpdateSessionTitle: (id: string, title: string) => void,
@@ -132,10 +128,6 @@ export function useChat(
   const streamStateRef = useRef<StreamState | null>(null);
   const autoApproveRef = useRef(autoApprove);
   autoApproveRef.current = autoApprove;
-  const selectedModelRef = useRef(selectedModel);
-  selectedModelRef.current = selectedModel;
-  const toolDefsRef = useRef(toolDefinitions);
-  toolDefsRef.current = toolDefinitions;
   const isCompactingRef = useRef(isCompacting);
   isCompactingRef.current = isCompacting;
   const tokenUsageRef = useRef(tokenUsage);
@@ -547,20 +539,14 @@ export function useChat(
           activeStream: {
             assistantId: "",
             content: "",
-            model: selectedModel!.name,
+            model: "",
             toolCalls: [],
           },
         };
       }
 
       await streamChat(
-        {
-          messages: [], // Backend builds history from DB when sessionId is present
-          model: selectedModel!.id,
-          provider: selectedModel!.provider,
-          tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-          sessionId,
-        },
+        { sessionId: sessionId! },
         {
           onSnapshot: (snap: SnapshotData) => {
             if (streamStateRef.current?.aborted) return;
@@ -717,12 +703,12 @@ export function useChat(
 
       return { toolCalls: collectedToolCalls, hasToolCalls };
     },
-    [selectedModel, toolDefinitions],
+    [],
   );
 
   const sendMessage = useCallback(
     async (content: string, images?: string[]) => {
-      if (!selectedModel || sendingRef.current) return;
+      if (sendingRef.current) return;
       // Synchronous guard: prevent a second call from entering while
       // awaiting onEnsureSession / saveMessage (before React re-renders).
       sendingRef.current = true;
@@ -801,7 +787,6 @@ export function useChat(
                 id: `err-${Date.now()}`,
                 role: "assistant" as const,
                 content: `Error: ${errMsg}`,
-                model: selectedModel.name,
                 timestamp: Date.now(),
               },
             ];
@@ -821,7 +806,6 @@ export function useChat(
       }
     },
     [
-      selectedModel,
       messages,
       activeSessionId,
       streamTurn,
@@ -831,19 +815,14 @@ export function useChat(
   );
 
   const compactContext = useCallback(
-    async (targetContextWindow?: number) => {
+    async () => {
       const sessionId = activeSessionId ?? sessionIdRef.current;
-      if (!sessionId || !selectedModel || streamStateRef.current || isCompactingRef.current) return;
+      if (!sessionId || streamStateRef.current || isCompactingRef.current) return;
 
       setCompactionError(null);
       try {
         setIsCompacting(true);
-        const result = await compactSessionApi(
-          sessionId,
-          selectedModel.id,
-          selectedModel.provider,
-          targetContextWindow ?? selectedModel.contextWindow,
-        );
+        const result = await compactSessionApi(sessionId);
         if (result.summary) {
           setMessages((prev) => [...prev, result.compactionMessage]);
         }
@@ -851,22 +830,21 @@ export function useChat(
         const msg = err instanceof Error ? err.message : "Compaction failed";
         console.error("Manual compaction failed:", err);
         setCompactionError(msg);
-        // Auto-clear the error after 5 seconds so the button doesn't stay red
         setTimeout(() => setCompactionError(null), 5000);
       } finally {
         setIsCompacting(false);
       }
     },
-    [selectedModel, activeSessionId],
+    [activeSessionId],
   );
 
   const switchModel = useCallback(
-    async (newModelId: string, newProvider: string) => {
+    async (newModelId: string) => {
       const sessionId = activeSessionId ?? sessionIdRef.current;
       if (!sessionId) return;
 
       try {
-        const result = await switchModelApi(sessionId, newModelId, newProvider);
+        const result = await switchModelApi(sessionId, newModelId);
         if (result.compacted && result.compactionMessage) {
           const msg = result.compactionMessage;
           setMessages((prev) => [...prev, msg]);
@@ -881,7 +859,7 @@ export function useChat(
   const approveToolCalls = useCallback(
     (messageId: string) => {
       const sessionId = activeSessionId ?? sessionIdRef.current;
-      if (!sessionId || !selectedModel) return;
+      if (!sessionId) return;
 
       // Optimistically update local state
       setMessages((prev) =>
@@ -895,11 +873,7 @@ export function useChat(
       streamStateRef.current = { sessionId, aborted: false, activeStream: null };
 
       // Send approval first so the backend creates a fresh stream, then subscribe
-      approveToolCallsApi(sessionId, messageId, {
-        model: selectedModel.id,
-        provider: selectedModel.provider,
-        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-      })
+      approveToolCallsApi(sessionId, messageId)
         .then(async () => {
           const cbs = subscribeStreamCallbacks(sessionId, () => false);
           const connected = await subscribeToStream(sessionId, cbs);
@@ -929,7 +903,7 @@ export function useChat(
           }
         });
     },
-    [activeSessionId, selectedModel, toolDefinitions, subscribeStreamCallbacks],
+    [activeSessionId, subscribeStreamCallbacks],
   );
 
   const denyToolCalls = useCallback(

@@ -39,6 +39,8 @@ describe("createSession", () => {
         id: "abc-123",
         title: "New chat",
         auto_approve: false,
+        model: null,
+        provider: null,
         created_at: now,
         updated_at: now,
       }],
@@ -49,11 +51,13 @@ describe("createSession", () => {
     const [sql, params] = mockQuery.mock.calls[0];
     expect(sql).toContain("INSERT INTO sessions");
     expect(sql).toContain("RETURNING");
-    expect(params).toHaveLength(2);
+    expect(params).toHaveLength(4);
     expect(params[1]).toBe("New chat");
 
     expect(session.id).toBe("abc-123");
     expect(session.title).toBe("New chat");
+    expect(session.model).toBe("");
+    expect(session.provider).toBe("");
     expect(session.createdAt).toBe(now.toISOString());
     expect(session.updatedAt).toBe(now.toISOString());
   });

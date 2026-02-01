@@ -28,6 +28,7 @@ const mockSessionStore = {
   createSession: vi.fn(),
   listSessions: vi.fn(),
   getSession: vi.fn(),
+  getSessionModelInfo: vi.fn().mockResolvedValue({ model: "deepseek-chat", provider: "deepseek" }),
   getMessages: vi.fn(),
   updateSessionTitle: vi.fn(),
   updateSession: vi.fn(),
@@ -461,11 +462,6 @@ describe("Session routes", () => {
       const res = await fetch(`${base}/sessions/s1/compact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4",
-          provider: "anthropic",
-          contextWindow: 100000,
-        }),
       });
       expect(res.status).toBe(200);
       const body = await res.json();
@@ -473,13 +469,14 @@ describe("Session routes", () => {
       expect(body.compactionMessage.role).toBe("compaction");
     });
 
-    it("returns 400 for missing fields", async () => {
+    it("returns 404 when session model info not found", async () => {
+      mockSessionStore.getSessionModelInfo.mockResolvedValueOnce(null);
+
       const res = await fetch(`${base}/sessions/s1/compact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4" }),
       });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
     });
 
     it("returns 500 when compaction fails", async () => {
@@ -488,11 +485,6 @@ describe("Session routes", () => {
       const res = await fetch(`${base}/sessions/s1/compact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "gpt-4",
-          provider: "anthropic",
-          contextWindow: 100000,
-        }),
       });
       expect(res.status).toBe(500);
       const body = await res.json();
@@ -502,7 +494,7 @@ describe("Session routes", () => {
 });
 
 describe("POST /api/chat/stream", () => {
-  it("accepts empty messages array with sessionId (frontend sends [] when history is in DB)", async () => {
+  it("accepts sessionId-only request (server resolves model/tools)", async () => {
     mockSessionStore.getSession.mockResolvedValueOnce({
       id: "s1",
       title: "Chat",
@@ -515,64 +507,19 @@ describe("POST /api/chat/stream", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        messages: [],
-        model: "deepseek-chat",
-        provider: "deepseek",
         sessionId: "s1",
         assistantId: "a1",
       }),
     });
-    // Must not be 400 — empty messages is valid when sessionId is present
+    // Must not be 400 — server resolves model/tools from session
     expect(res.status).toBe(200);
   });
 
-  it("accepts tool definitions with operations format", async () => {
+  it("rejects request without sessionId", async () => {
     const res = await fetch(`${base}/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: "hello" }],
-        model: "deepseek-chat",
-        provider: "deepseek",
-        tools: [
-          {
-            name: "test_tool",
-            description: "A test tool",
-            operations: {
-              do_thing: {
-                params: {
-                  input: { type: "string", description: "test" },
-                },
-                required: ["input"],
-              },
-            },
-          },
-        ],
-      }),
-    });
-    // Should not be a 400 validation error
-    expect(res.status).toBe(200);
-  });
-
-  it("rejects tool definitions with old parameters format", async () => {
-    const res = await fetch(`${base}/chat/stream`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: "hello" }],
-        model: "deepseek-chat",
-        provider: "deepseek",
-        tools: [
-          {
-            name: "bad_tool",
-            description: "Old format",
-            parameters: {
-              type: "object",
-              properties: { x: { type: "string" } },
-            },
-          },
-        ],
-      }),
+      body: JSON.stringify({}),
     });
     expect(res.status).toBe(400);
   });
@@ -643,7 +590,7 @@ describe("Approve/Deny endpoints", () => {
       const res = await fetch(`${base}/sessions/s1/messages/m1/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4", provider: "deepseek" }),
+        body: JSON.stringify({}),
       });
       expect(res.status).toBe(202);
       const body = await res.json();
@@ -651,12 +598,12 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 404 for missing session", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce(null);
+      mockSessionStore.getSessionModelInfo.mockResolvedValueOnce(null);
 
       const res = await fetch(`${base}/sessions/nonexistent/messages/m1/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4", provider: "deepseek" }),
+        body: JSON.stringify({}),
       });
       expect(res.status).toBe(404);
     });
@@ -673,7 +620,7 @@ describe("Approve/Deny endpoints", () => {
       const res = await fetch(`${base}/sessions/s1/messages/nonexistent/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4", provider: "deepseek" }),
+        body: JSON.stringify({}),
       });
       expect(res.status).toBe(404);
     });
@@ -699,18 +646,9 @@ describe("Approve/Deny endpoints", () => {
       const res = await fetch(`${base}/sessions/s1/messages/m1/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4", provider: "deepseek" }),
-      });
-      expect(res.status).toBe(409);
-    });
-
-    it("returns 400 for invalid body", async () => {
-      const res = await fetch(`${base}/sessions/s1/messages/m1/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(409);
     });
 
     it("always creates a fresh stream even if one already exists", async () => {
@@ -721,7 +659,7 @@ describe("Approve/Deny endpoints", () => {
         sessionId: "s1",
         assistantId: "old-a1",
         content: "done content",
-        model: "gpt-4",
+        model: "deepseek-chat",
         toolCalls: [],
         hasToolCalls: true,
         done: true,
@@ -749,12 +687,12 @@ describe("Approve/Deny endpoints", () => {
       const res = await fetch(`${base}/sessions/s1/messages/m1/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: "gpt-4", provider: "deepseek" }),
+        body: JSON.stringify({}),
       });
       expect(res.status).toBe(202);
 
       // createStream must be called unconditionally to replace the stale done stream
-      expect(mockCreate).toHaveBeenCalledWith("s1", "m1", "gpt-4");
+      expect(mockCreate).toHaveBeenCalledWith("s1", "m1", "deepseek-chat");
     });
   });
 

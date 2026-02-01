@@ -14,13 +14,24 @@ export function useSettings() {
       .finally(() => setLoading(false));
 
     // Listen for settings changes broadcast by other clients
-    const unsub = wsClient.onPush("__settings__", (event: SSEEvent) => {
+    const unsubPush = wsClient.onPush("__settings__", (event: SSEEvent) => {
       if (event.type === "settings_changed") {
         setSettings(event.data);
       }
     });
 
-    return unsub;
+    // Re-fetch settings on reconnect to compensate for pushes missed while
+    // the WebSocket was down (e.g., mobile backgrounded during a model change).
+    const unsubConn = wsClient.onConnectionChange((connected) => {
+      if (connected) {
+        fetchSettings().then(setSettings).catch(console.error);
+      }
+    });
+
+    return () => {
+      unsubPush();
+      unsubConn();
+    };
   }, []);
 
   const saveSettings = useCallback(

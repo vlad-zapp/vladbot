@@ -7,6 +7,7 @@ import type { SSEEvent } from "@vladbot/shared";
 
 const {
   mockGetSession,
+  mockGetSessionModelInfo,
   mockAtomicApprove,
   mockAddMessage,
   mockUpdateMessage,
@@ -19,6 +20,7 @@ const {
   capturedHandlers,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
+  mockGetSessionModelInfo: vi.fn(),
   mockAtomicApprove: vi.fn(),
   mockAddMessage: vi.fn().mockResolvedValue("new-msg-id"),
   mockUpdateMessage: vi.fn().mockResolvedValue(undefined),
@@ -45,12 +47,15 @@ vi.mock("../services/sessionStore.js", () => ({
   createSession: vi.fn(),
   listSessions: vi.fn(),
   getSession: (...args: unknown[]) => mockGetSession(...args),
+  getSessionModelInfo: (...args: unknown[]) => mockGetSessionModelInfo(...args),
   getMessages: vi.fn(),
   updateSessionTitle: vi.fn(),
+  updateSession: vi.fn(),
   deleteSession: vi.fn(),
   addMessage: (...args: unknown[]) => mockAddMessage(...args),
   updateMessage: (...args: unknown[]) => mockUpdateMessage(...args),
   atomicApprove: (...args: unknown[]) => mockAtomicApprove(...args),
+  getSessionAutoApprove: vi.fn().mockResolvedValue(false),
   updateSessionTokenUsage: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -152,7 +157,7 @@ function makeWatcher(id: string) {
 
 const SESSION_ID = "session-1";
 const MESSAGE_ID = "msg-1";
-const MODEL = "test-model";
+const MODEL = "claude-sonnet-4-20250514";
 const PROVIDER = "anthropic";
 
 function baseSession(approvalStatus = "pending") {
@@ -178,6 +183,8 @@ function baseSession(approvalStatus = "pending") {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetSessionWatchers.mockReturnValue([]);
+  // Default: session has a known model/provider
+  mockGetSessionModelInfo.mockResolvedValue({ model: MODEL, provider: PROVIDER });
 });
 
 // ---------------------------------------------------------------------------
@@ -205,7 +212,7 @@ describe("messages.approve — cross-client sync", () => {
     mockCreateStream.mockReturnValueOnce(fakeStream);
 
     await handler(
-      { sessionId: SESSION_ID, messageId: MESSAGE_ID, model: MODEL, provider: PROVIDER },
+      { sessionId: SESSION_ID, messageId: MESSAGE_ID },
       ctx,
     );
 
@@ -249,7 +256,7 @@ describe("messages.approve — cross-client sync", () => {
     mockCreateStream.mockReturnValueOnce(fakeStream);
 
     await handler(
-      { sessionId: SESSION_ID, messageId: MESSAGE_ID, model: MODEL, provider: PROVIDER },
+      { sessionId: SESSION_ID, messageId: MESSAGE_ID },
       ctx,
     );
 
@@ -277,7 +284,7 @@ describe("messages.approve — cross-client sync", () => {
 
     await expect(
       handler(
-        { sessionId: SESSION_ID, messageId: MESSAGE_ID, model: MODEL, provider: PROVIDER },
+        { sessionId: SESSION_ID, messageId: MESSAGE_ID },
         ctx,
       ),
     ).resolves.toEqual({});
@@ -292,7 +299,7 @@ describe("messages.approve — cross-client sync", () => {
 
     await expect(
       handler(
-        { sessionId: SESSION_ID, messageId: MESSAGE_ID, model: MODEL, provider: PROVIDER },
+        { sessionId: SESSION_ID, messageId: MESSAGE_ID },
         ctx,
       ),
     ).rejects.toThrow("Message was already approved by a concurrent request");

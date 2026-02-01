@@ -1,7 +1,6 @@
 import type {
   AppSettings,
   ChatMessage,
-  ChatRequest,
   ClassifiedError,
   Memory,
   MemoryCreateRequest,
@@ -194,14 +193,10 @@ function dispatchStreamEvent(event: SSEEvent, callbacks: StreamCallbacks): void 
 }
 
 export async function streamChat(
-  request: ChatRequest & { sessionId?: string; assistantId?: string },
+  request: { sessionId: string; assistantId?: string },
   callbacks: StreamCallbacks,
 ): Promise<void> {
-  const sessionId = request.sessionId;
-  if (!sessionId) {
-    callbacks.onError({ message: "sessionId is required for streaming", code: "UNKNOWN", recoverable: false });
-    return;
-  }
+  const { sessionId } = request;
 
   return new Promise<void>((resolve) => {
     let finished = false;
@@ -289,13 +284,10 @@ export async function subscribeToStream(
 
 export async function compactSessionApi(
   sessionId: string,
-  model: string,
-  provider: string,
-  contextWindow: number,
 ): Promise<{ compactionMessage: ChatMessage; summary: string }> {
   return wsClient.request<{ compactionMessage: ChatMessage; summary: string }>(
     "sessions.compact",
-    { sessionId, model, provider, contextWindow },
+    { sessionId },
   );
 }
 
@@ -304,11 +296,10 @@ export async function compactSessionApi(
 export async function switchModelApi(
   sessionId: string,
   newModel: string,
-  newProvider: string,
 ): Promise<{ compacted: boolean; compactionMessage?: ChatMessage }> {
   return wsClient.request<{ compacted: boolean; compactionMessage?: ChatMessage }>(
     "sessions.switchModel",
-    { sessionId, newModel, newProvider },
+    { sessionId, newModel },
   );
 }
 
@@ -371,12 +362,10 @@ export async function updateSettings(
 export async function approveToolCallsApi(
   sessionId: string,
   messageId: string,
-  body: { model: string; provider: string; tools?: ToolDefinition[] },
 ): Promise<void> {
   await wsClient.request("messages.approve", {
     sessionId,
     messageId,
-    ...body,
   });
 }
 

@@ -195,7 +195,7 @@ describe("WsClient", () => {
       expect(ws.sent).toHaveLength(1);
       const msg = JSON.parse(ws.sent[0]);
       expect(msg.type).toBe("config.init");
-      expect(msg.payload.version).toBe(1);
+      expect(msg.payload.version).toBe(2);
       expect(msg.payload.retryCount).toBe(2);
     });
 

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { ChatMessage } from "@vladbot/shared";
 import type { SSEEvent } from "@vladbot/shared";
+import { AVAILABLE_MODELS } from "@vladbot/shared";
 import {
   createSession,
   listSessions,
@@ -9,6 +10,7 @@ import {
   getMessages,
   updateSessionTitle,
   updateSession,
+  getSessionModelInfo,
   deleteSession,
   addMessage,
   updateMessage,
@@ -18,7 +20,7 @@ import { getSessionFilePath, saveSessionFile } from "../services/sessionFiles.js
 import { compactSession } from "../services/compaction.js";
 import { createStream, getStream } from "../services/streamRegistry.js";
 import { executeToolRound, denyToolRound } from "../services/toolLoop.js";
-import { toolDefinitionSchema } from "./schemas.js";
+import { getToolDefinitions } from "../services/tools/index.js";
 import { estimateMessageTokens } from "../services/tokenCounter.js";
 import { getSetting, putSettings } from "../services/settingsStore.js";
 
@@ -233,22 +235,30 @@ router.get("/sessions/:id/stream", (req, res) => {
 });
 
 router.post("/sessions/:id/compact", async (req, res) => {
-  const schema = z.object({
-    model: z.string().min(1),
-    provider: z.string().min(1),
-    contextWindow: z.number().positive(),
-  });
-  const parsed = schema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
+  const sessionId = req.params.id;
+  const info = await getSessionModelInfo(sessionId);
+  if (!info) {
+    res.status(404).json({ error: "Session not found" });
     return;
   }
+
+  let modelInfo = info.model
+    ? AVAILABLE_MODELS.find((m) => m.id === info.model)
+    : undefined;
+  if (!modelInfo) {
+    const defaultModelId = await getSetting("default_model");
+    modelInfo =
+      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      AVAILABLE_MODELS[0];
+    await updateSession(sessionId, { model: modelInfo.id, provider: modelInfo.provider });
+  }
+
   try {
     const result = await compactSession(
-      req.params.id,
-      parsed.data.model,
-      parsed.data.provider,
-      parsed.data.contextWindow,
+      sessionId,
+      modelInfo.id,
+      modelInfo.provider,
+      modelInfo.contextWindow,
     );
     res.json(result);
   } catch (err) {
@@ -278,20 +288,28 @@ router.patch("/sessions/:id/messages/:messageId", async (req, res) => {
 
 // --- Server-side tool approval & execution ---
 
-const approveSchema = z.object({
-  model: z.string().min(1),
-  provider: z.string().min(1),
-  tools: z.array(toolDefinitionSchema).optional(),
-});
-
 router.post("/sessions/:id/messages/:messageId/approve", async (req, res) => {
-  const parsed = approveSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
+  const sessionId = req.params.id;
+
+  // Resolve model/provider from session (server is source of truth)
+  const info = await getSessionModelInfo(sessionId);
+  if (!info) {
+    res.status(404).json({ error: "Session not found" });
     return;
   }
+  let modelInfo = info.model
+    ? AVAILABLE_MODELS.find((m) => m.id === info.model)
+    : undefined;
+  if (!modelInfo) {
+    const defaultModelId = await getSetting("default_model");
+    modelInfo =
+      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      AVAILABLE_MODELS[0];
+    await updateSession(sessionId, { model: modelInfo.id, provider: modelInfo.provider });
+  }
+  const tools = getToolDefinitions();
 
-  const session = await getSession(req.params.id);
+  const session = await getSession(sessionId);
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
@@ -319,18 +337,18 @@ router.post("/sessions/:id/messages/:messageId/approve", async (req, res) => {
   // Always create a fresh stream — the old one from the first LLM round may
   // still exist with done=true, which would cause subscribers to resolve
   // immediately and miss the tool-execution round.
-  createStream(req.params.id, req.params.messageId, parsed.data.model);
+  createStream(sessionId, req.params.messageId, modelInfo.id);
 
   // Return 202 — execution happens in background
   res.status(202).json({ ok: true });
 
   // Execute tools and continue conversation in background
   executeToolRound(
-    req.params.id,
+    sessionId,
     req.params.messageId,
-    parsed.data.model,
-    parsed.data.provider,
-    parsed.data.tools as import("@vladbot/shared").ToolDefinition[] | undefined,
+    modelInfo.id,
+    modelInfo.provider,
+    tools,
   ).catch((err) => {
     console.error("Tool execution failed:", err);
   });

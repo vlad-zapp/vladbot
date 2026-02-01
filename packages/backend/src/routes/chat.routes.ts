@@ -1,8 +1,9 @@
 import { Router } from "express";
-import type { SSEEvent, ToolDefinition } from "@vladbot/shared";
+import type { SSEEvent } from "@vladbot/shared";
+import { AVAILABLE_MODELS } from "@vladbot/shared";
 import { getProvider } from "../services/ai/ProviderFactory.js";
-import { executeToolCalls, validateToolCalls } from "../services/tools/index.js";
-import { addMessage, getSession, updateSessionTokenUsage, updateMessage } from "../services/sessionStore.js";
+import { executeToolCalls, validateToolCalls, getToolDefinitions } from "../services/tools/index.js";
+import { addMessage, getSession, getSessionModelInfo, updateSession, updateSessionTokenUsage, updateMessage } from "../services/sessionStore.js";
 import {
   createStream,
   pushEvent,
@@ -12,6 +13,7 @@ import { chatRequestSchema, toolExecuteSchema } from "./schemas.js";
 import { buildHistoryFromDB } from "../services/toolLoop.js";
 import { estimateMessageTokens } from "../services/tokenCounter.js";
 import { classifyLLMError } from "../services/ai/errorClassifier.js";
+import { getSetting } from "../services/settingsStore.js";
 
 const router = Router();
 
@@ -22,17 +24,30 @@ router.post("/chat/stream", async (req, res) => {
     return;
   }
 
-  const {
-    messages,
-    model,
-    provider: providerName,
-    tools,
-    sessionId,
-    assistantId,
-  } = parsed.data;
+  const { sessionId, assistantId } = parsed.data;
+
+  // Resolve model/provider from session (server is source of truth)
+  const sessionModelInfo = await getSessionModelInfo(sessionId);
+  if (!sessionModelInfo) {
+    res.status(404).json({ error: "Session not found" });
+    return;
+  }
+  let modelInfo = sessionModelInfo.model
+    ? AVAILABLE_MODELS.find((m) => m.id === sessionModelInfo.model)
+    : undefined;
+  if (!modelInfo) {
+    const defaultModelId = await getSetting("default_model");
+    modelInfo =
+      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      AVAILABLE_MODELS[0];
+    await updateSession(sessionId, { model: modelInfo.id, provider: modelInfo.provider });
+  }
+  const model = modelInfo.id;
+  const providerName = modelInfo.provider;
+  const tools = getToolDefinitions();
 
   // Register stream in the registry so it survives client disconnects
-  if (sessionId && assistantId) {
+  if (assistantId) {
     createStream(sessionId, assistantId, model);
   }
 
@@ -50,7 +65,7 @@ router.post("/chat/stream", async (req, res) => {
     }
   };
 
-  if (sessionId && assistantId) {
+  if (assistantId) {
     const { getStream } = await import("../services/streamRegistry.js");
     const stream = getStream(sessionId);
     if (stream) {
@@ -63,20 +78,15 @@ router.post("/chat/stream", async (req, res) => {
   }
 
   try {
-    // Build history from DB when a session exists (frontend may only have a page of messages)
-    let history = messages;
-    if (sessionId) {
-      const session = await getSession(sessionId);
-      if (session) {
-        history = buildHistoryFromDB(session.messages);
-      }
-    }
+    const session = await getSession(sessionId);
+    if (!session) throw new Error("Session not found");
+    const history = buildHistoryFromDB(session.messages);
 
     const provider = getProvider(providerName);
     const aiStream = provider.generateStream(
       history,
       model,
-      tools as ToolDefinition[] | undefined,
+      tools,
     );
     let hasToolCalls = false;
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import type { ChatMessage, ToolDefinition, SSEEvent } from "@vladbot/shared";
+import type { ChatMessage, ModelInfo, SSEEvent } from "@vladbot/shared";
 import { AVAILABLE_MODELS } from "@vladbot/shared";
 import { registerHandler, watchSession, unwatchSession, getSessionWatchers } from "./wsServer.js";
 import { env } from "../config/env.js";
@@ -12,6 +12,7 @@ import {
   updateSessionTitle,
   updateSession,
   getSessionAutoApprove,
+  getSessionModelInfo,
   deleteSession,
   addMessage,
   updateMessage,
@@ -37,7 +38,6 @@ import { autoCompactIfNeeded } from "../services/autoCompact.js";
 import {
   chatRequestSchema,
   toolExecuteSchema,
-  toolDefinitionSchema,
 } from "../routes/schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -101,6 +101,31 @@ const providerKeyMap: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
 };
 
+/**
+ * Resolve the model for a session from the DB.
+ * Legacy sessions (NULL model) are lazy-migrated to the default model.
+ */
+async function resolveSessionModel(sessionId: string): Promise<ModelInfo> {
+  const info = await getSessionModelInfo(sessionId);
+  if (!info) throw new WsError(404, "Session not found");
+
+  if (info.model) {
+    const modelInfo = AVAILABLE_MODELS.find((m) => m.id === info.model);
+    if (modelInfo) return modelInfo;
+  }
+
+  // Legacy session or unknown model — fall back to default_model setting
+  const defaultModelId = await getSetting("default_model");
+  const defaultModel =
+    (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+    AVAILABLE_MODELS[0];
+
+  // Lazy-migrate
+  await updateSession(sessionId, { model: defaultModel.id, provider: defaultModel.provider });
+
+  return defaultModel;
+}
+
 registerHandler("models.list", async () => {
   return AVAILABLE_MODELS.filter((m) => {
     const key = providerKeyMap[m.provider];
@@ -135,10 +160,23 @@ registerHandler("sessions.list", async () => {
 });
 
 registerHandler("sessions.create", async (payload, ctx) => {
-  const schema = z.object({ title: z.string().optional() });
+  const schema = z.object({ title: z.string().optional(), model: z.string().optional() });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
-  const session = await createSession(parsed.data.title);
+
+  // Resolve model: explicit param > default_model setting > first available
+  let modelInfo: ModelInfo | undefined;
+  if (parsed.data.model) {
+    modelInfo = AVAILABLE_MODELS.find((m) => m.id === parsed.data.model);
+  }
+  if (!modelInfo) {
+    const defaultModelId = await getSetting("default_model");
+    modelInfo =
+      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      AVAILABLE_MODELS[0];
+  }
+
+  const session = await createSession(parsed.data.title, modelInfo.id, modelInfo.provider);
   ctx.broadcastGlobal("__sessions__", { type: "session_created", data: session });
   return session;
 });
@@ -361,14 +399,15 @@ registerHandler("messages.approve", async (payload, ctx) => {
   const schema = z.object({
     sessionId: z.string().min(1),
     messageId: z.string().min(1),
-    model: z.string().min(1),
-    provider: z.string().min(1),
-    tools: z.array(toolDefinitionSchema).optional(),
   });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
 
-  const { sessionId, messageId, model, provider, tools } = parsed.data;
+  const { sessionId, messageId } = parsed.data;
+
+  const modelInfo = await resolveSessionModel(sessionId);
+  const model = modelInfo.id;
+  const tools = getToolDefinitions();
 
   const session = await getSession(sessionId);
   if (!session) throw new WsError(404, "Session not found");
@@ -412,8 +451,8 @@ registerHandler("messages.approve", async (payload, ctx) => {
     sessionId,
     messageId,
     model,
-    provider,
-    tools as ToolDefinition[] | undefined,
+    modelInfo.provider,
+    tools,
   ).catch((err) => {
     console.error("Tool execution failed:", err);
   });
@@ -458,37 +497,44 @@ registerHandler("messages.deny", async (payload, ctx) => {
 registerHandler("sessions.compact", async (payload) => {
   const schema = z.object({
     sessionId: z.string().min(1),
-    model: z.string().min(1),
-    provider: z.string().min(1),
-    contextWindow: z.number().positive(),
   });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
+
+  const modelInfo = await resolveSessionModel(parsed.data.sessionId);
   return await compactSession(
     parsed.data.sessionId,
-    parsed.data.model,
-    parsed.data.provider,
-    parsed.data.contextWindow,
+    modelInfo.id,
+    modelInfo.provider,
+    modelInfo.contextWindow,
   );
 });
 
-registerHandler("sessions.switchModel", async (payload) => {
+registerHandler("sessions.switchModel", async (payload, ctx) => {
   const schema = z.object({
     sessionId: z.string().min(1),
     newModel: z.string().min(1),
-    newProvider: z.string().min(1),
   });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
 
-  const { sessionId, newModel, newProvider } = parsed.data;
-  const session = await getSession(sessionId);
-  if (!session) throw new WsError(404, "Session not found");
-
+  const { sessionId, newModel } = parsed.data;
   const newModelInfo = AVAILABLE_MODELS.find((m) => m.id === newModel);
   if (!newModelInfo) throw new WsError(400, "Unknown model");
 
-  if (!session.tokenUsage || newModelInfo.contextWindow <= 0) {
+  // Persist model/provider on the session
+  const updatedSession = await updateSession(sessionId, {
+    model: newModelInfo.id,
+    provider: newModelInfo.provider,
+  });
+  if (!updatedSession) throw new WsError(404, "Session not found");
+
+  // Broadcast so all clients see the new model
+  ctx.broadcastGlobal("__sessions__", { type: "session_updated", data: updatedSession });
+
+  // Check if context exceeds 80% of new model's window → auto-compact
+  const session = await getSession(sessionId);
+  if (!session?.tokenUsage || newModelInfo.contextWindow <= 0) {
     return { compacted: false };
   }
 
@@ -500,8 +546,8 @@ registerHandler("sessions.switchModel", async (payload) => {
   try {
     const result = await compactSession(
       sessionId,
-      newModel,
-      newProvider,
+      newModelInfo.id,
+      newModelInfo.provider,
       newModelInfo.contextWindow,
     );
     return { compacted: true, compactionMessage: result.compactionMessage };
@@ -637,69 +683,63 @@ registerHandler("chat.stream", async (payload, ctx) => {
   const parsed = chatRequestSchema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
 
-  const {
-    messages,
-    model,
-    provider: providerName,
-    tools,
-    sessionId,
-  } = parsed.data;
+  const { sessionId } = parsed.data;
   const assistantId = parsed.data.assistantId ?? randomUUID();
 
+  // Resolve model/provider/tools from the session (server is source of truth)
+  const modelInfo = await resolveSessionModel(sessionId);
+  const model = modelInfo.id;
+  const providerName = modelInfo.provider;
+  const tools = getToolDefinitions();
+
   // Register stream in the registry
-  if (sessionId) {
-    createStream(sessionId, assistantId, model);
+  createStream(sessionId, assistantId, model);
 
-    // Register this WS connection as a subscriber
-    const stream = getStream(sessionId);
-    if (stream) {
-      const subscriber = (event: SSEEvent) => {
-        ctx.push(sessionId, event);
+  // Register this WS connection as a subscriber
+  const stream = getStream(sessionId);
+  if (stream) {
+    const subscriber = (event: SSEEvent) => {
+      ctx.push(sessionId, event);
+    };
+    stream.subscribers.add(subscriber);
+    ctx.addSubscription(sessionId, subscriber);
+
+    // Send snapshot to the initiating client so it knows the assistantId
+    ctx.push(sessionId, {
+      type: "snapshot",
+      data: { assistantId, content: "", model, toolCalls: [] },
+    });
+
+    // Auto-subscribe all other session watchers so they see the stream live
+    for (const watcher of getSessionWatchers(sessionId)) {
+      if (watcher.ws === ctx.ws) continue; // Skip the initiating client
+      const watcherSub = (event: SSEEvent) => {
+        watcher.push(sessionId, event);
       };
-      stream.subscribers.add(subscriber);
-      ctx.addSubscription(sessionId, subscriber);
+      stream.subscribers.add(watcherSub);
+      watcher.addSubscription(sessionId, watcherSub);
 
-      // Send snapshot to the initiating client so it knows the assistantId
-      ctx.push(sessionId, {
+      // Send snapshot so watcher's client picks up the stream immediately
+      watcher.push(sessionId, {
         type: "snapshot",
         data: { assistantId, content: "", model, toolCalls: [] },
       });
-
-      // Auto-subscribe all other session watchers so they see the stream live
-      for (const watcher of getSessionWatchers(sessionId)) {
-        if (watcher.ws === ctx.ws) continue; // Skip the initiating client
-        const watcherSub = (event: SSEEvent) => {
-          watcher.push(sessionId, event);
-        };
-        stream.subscribers.add(watcherSub);
-        watcher.addSubscription(sessionId, watcherSub);
-
-        // Send snapshot so watcher's client picks up the stream immediately
-        watcher.push(sessionId, {
-          type: "snapshot",
-          data: { assistantId, content: "", model, toolCalls: [] },
-        });
-      }
     }
   }
 
   // Run streaming in background — return ACK immediately
   const streamAsync = async () => {
     try {
-      let history = messages;
-      if (sessionId) {
-        const session = await getSession(sessionId);
-        if (session) {
-          history = buildHistoryFromDB(session.messages);
-        }
-      }
+      const session = await getSession(sessionId);
+      if (!session) throw new Error("Session not found");
+      const history = buildHistoryFromDB(session.messages);
 
       const provider = getProvider(providerName);
-      const stream = sessionId ? getStream(sessionId) : null;
+      const stream = getStream(sessionId);
       const aiStream = provider.generateStream(
         history,
         model,
-        tools as ToolDefinition[] | undefined,
+        tools,
         stream?.abortController.signal,
       );
       let hasToolCalls = false;
@@ -797,7 +837,7 @@ registerHandler("chat.stream", async (payload, ctx) => {
               assistantId,
               model,
               providerName,
-              tools as ToolDefinition[] | undefined,
+              tools,
               0,
             ).catch((err) => {
               console.error("Auto-approve tool execution failed:", err);

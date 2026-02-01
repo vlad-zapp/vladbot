@@ -30,7 +30,7 @@ export function useSessions() {
       .finally(() => setLoading(false));
 
     // Listen for session changes from other clients
-    const unsub = wsClient.onPush("__sessions__", (event: SSEEvent) => {
+    const unsubPush = wsClient.onPush("__sessions__", (event: SSEEvent) => {
       switch (event.type) {
         case "session_created":
           setSessions((prev) => {
@@ -53,7 +53,18 @@ export function useSessions() {
       }
     });
 
-    return unsub;
+    // Re-fetch sessions on reconnect to compensate for pushes missed while
+    // the WebSocket was down (e.g., session_updated with autoApprove change).
+    const unsubConn = wsClient.onConnectionChange((connected) => {
+      if (connected) {
+        fetchSessions().then(setSessions).catch(console.error);
+      }
+    });
+
+    return () => {
+      unsubPush();
+      unsubConn();
+    };
   }, []);
 
   const createNewSession = useCallback(

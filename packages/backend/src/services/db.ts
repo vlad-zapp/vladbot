@@ -66,6 +66,8 @@ await pool.query(`
   CREATE INDEX IF NOT EXISTS idx_messages_content_trgm ON messages USING GIN(content gin_trgm_ops);
 
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS auto_approve BOOLEAN NOT NULL DEFAULT false;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS model TEXT;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS provider TEXT;
 
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

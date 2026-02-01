@@ -20,4 +20,4 @@ export const DEFAULT_MODEL = AVAILABLE_MODELS[0];
 export const VERBATIM_TAIL_COUNT = 5;
 
 /** Current API version. Bump when the protocol changes. */
-export const API_VERSION = 1;
+export const API_VERSION = 2;

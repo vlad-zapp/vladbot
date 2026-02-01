@@ -99,9 +99,8 @@ export type SSEEvent =
 // Request/Response types
 export interface ChatRequest {
   messages: MessagePart[];
-  model: string;
-  provider: string;
-  tools?: ToolDefinition[];
+  sessionId: string;
+  assistantId?: string;
 }
 
 export interface ToolExecuteRequest {
@@ -125,6 +124,8 @@ export interface Session {
   id: string;
   title: string;
   autoApprove: boolean;
+  model: string;
+  provider: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import type { ToolCall, ToolDefinition } from "@vladbot/shared";
+import type { ToolCall } from "@vladbot/shared";
 
 const BASE = "http://localhost:3001/api";
 
@@ -57,12 +57,12 @@ describe("Integration: /api/tools", () => {
     expect(body.definitions).toBeInstanceOf(Array);
     expect(body.definitions.length).toBeGreaterThanOrEqual(2);
     const fs = body.definitions.find(
-      (d: ToolDefinition) => d.name === "filesystem",
+      (d: { name: string; operations: Record<string, unknown> }) => d.name === "filesystem",
     );
     expect(fs).toBeDefined();
     expect(fs.operations.list_directory).toBeDefined();
     const rc = body.definitions.find(
-      (d: ToolDefinition) => d.name === "run_command",
+      (d: { name: string; operations: Record<string, unknown> }) => d.name === "run_command",
     );
     expect(rc).toBeDefined();
     expect(rc.operations.execute.params.command).toBeDefined();
@@ -129,38 +129,35 @@ describe("Integration: DeepSeek tool call via /api/chat/stream", () => {
   it("triggers a filesystem tool call when asked to list files", {
     timeout: 30_000,
   }, async () => {
-      const res = await fetch(`${BASE}/chat/stream`, {
+      // Create a session (server assigns the default model)
+      const createRes = await fetch(`${BASE}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Integration test" }),
+      });
+      expect(createRes.ok).toBe(true);
+      const session = await createRes.json();
+      const sessionId = session.id;
+
+      // Add a user message
+      const msgRes = await fetch(`${BASE}/sessions/${sessionId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: [
-            {
-              role: "user",
-              content:
-                "Use the filesystem_list_directory tool to list the contents of /tmp. Do not explain, just call the tool.",
-            },
-          ],
-          model: "deepseek-chat",
-          provider: "deepseek",
-          tools: [
-            {
-              name: "filesystem",
-              description:
-                "Perform filesystem operations.",
-              operations: {
-                list_directory: {
-                  params: {
-                    path: {
-                      type: "string",
-                      description: "Absolute path to the directory to list.",
-                    },
-                  },
-                  required: ["path"],
-                },
-              },
-            },
-          ],
+          id: crypto.randomUUID(),
+          role: "user",
+          content:
+            "Use the filesystem_list_directory tool to list the contents of /tmp. Do not explain, just call the tool.",
+          timestamp: Date.now(),
         }),
+      });
+      expect(msgRes.ok).toBe(true);
+
+      // Stream — server resolves model/provider/tools from the session
+      const res = await fetch(`${BASE}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
       });
 
       expect(res.ok).toBe(true);
