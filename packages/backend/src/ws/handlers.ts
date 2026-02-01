@@ -10,6 +10,8 @@ import {
   getSession,
   getMessages,
   updateSessionTitle,
+  updateSession,
+  getSessionAutoApprove,
   deleteSession,
   addMessage,
   updateMessage,
@@ -28,7 +30,7 @@ import { executeToolRound, denyToolRound, buildHistoryFromDB } from "../services
 import { getToolDefinitions, executeToolCalls, validateToolCalls } from "../services/tools/index.js";
 import { estimateMessageTokens } from "../services/tokenCounter.js";
 import { getSetting, putSettings } from "../services/settingsStore.js";
-import { getAllRuntimeSettings, getRuntimeSetting } from "../config/runtimeSettings.js";
+import { getAllRuntimeSettings } from "../config/runtimeSettings.js";
 import { getProvider } from "../services/ai/ProviderFactory.js";
 import { classifyLLMError } from "../services/ai/errorClassifier.js";
 import { autoCompactIfNeeded } from "../services/autoCompact.js";
@@ -151,10 +153,19 @@ registerHandler("sessions.get", async (payload) => {
 });
 
 registerHandler("sessions.update", async (payload, ctx) => {
-  const schema = z.object({ id: z.string().min(1), title: z.string().min(1).max(200) });
+  const schema = z.object({
+    id: z.string().min(1),
+    title: z.string().min(1).max(200).optional(),
+    autoApprove: z.boolean().optional(),
+  }).refine((d) => d.title !== undefined || d.autoApprove !== undefined, {
+    message: "At least one of title or autoApprove must be provided",
+  });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
-  const session = await updateSessionTitle(parsed.data.id, parsed.data.title);
+  const session = await updateSession(parsed.data.id, {
+    title: parsed.data.title,
+    autoApprove: parsed.data.autoApprove,
+  });
   if (!session) throw new WsError(404, "Session not found");
   ctx.broadcastGlobal("__sessions__", { type: "session_updated", data: session });
   return session;
@@ -774,10 +785,10 @@ registerHandler("chat.stream", async (payload, ctx) => {
         }
       }
 
-      // Auto-approve: if enabled, approve and execute tools without client round-trip
+      // Auto-approve: if enabled for this session, approve and execute tools without client round-trip
       if (hasToolCalls && sessionId && assistantId) {
-        const autoApproveSetting = await getRuntimeSetting("auto_approve");
-        if (autoApproveSetting === "true") {
+        const autoApprove = await getSessionAutoApprove(sessionId);
+        if (autoApprove) {
           const approved = await atomicApprove(assistantId);
           if (approved) {
             pushEvent(sessionId, { type: "auto_approved", data: { messageId: assistantId } });

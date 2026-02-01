@@ -34,18 +34,11 @@ export default function SettingsPage({ settings, models, onSave }: SettingsPageP
     wsClient.setRetryCount(clamped);
   };
 
-  // Settings managed programmatically elsewhere (auto-approve toggle, session tracking).
-  // Exclude from the Settings page save to avoid overwriting with stale values.
-  const EXCLUDED_KEYS: (keyof AppSettings)[] = ["auto_approve", "last_active_session_id"];
-
   const handleSave = async () => {
     setSaving(true);
     setSaved(false);
     try {
-      const filtered = Object.fromEntries(
-        Object.entries(form).filter(([k]) => !EXCLUDED_KEYS.includes(k as keyof AppSettings)),
-      ) as Partial<AppSettings>;
-      await onSave(filtered);
+      await onSave(form);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {

@@ -15,6 +15,7 @@ function rowToSession(row: Record<string, unknown>): Session {
   return {
     id: row.id as string,
     title: row.title as string,
+    autoApprove: row.auto_approve as boolean,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   };
@@ -52,7 +53,7 @@ export async function createSession(title: string = "New chat"): Promise<Session
   const id = uuid();
   const result = await pool.query(
     `INSERT INTO sessions (id, title) VALUES ($1, $2)
-     RETURNING id, title, created_at, updated_at`,
+     RETURNING id, title, auto_approve, created_at, updated_at`,
     [id, title],
   );
   return rowToSession(result.rows[0]);
@@ -60,7 +61,7 @@ export async function createSession(title: string = "New chat"): Promise<Session
 
 export async function listSessions(): Promise<Session[]> {
   const result = await pool.query(
-    `SELECT id, title, created_at, updated_at
+    `SELECT id, title, auto_approve, created_at, updated_at
      FROM sessions ORDER BY updated_at DESC`,
   );
   return result.rows.map(rowToSession);
@@ -68,7 +69,7 @@ export async function listSessions(): Promise<Session[]> {
 
 export async function getSession(id: string): Promise<SessionWithMessages | null> {
   const sessionResult = await pool.query(
-    `SELECT id, title, token_usage, created_at, updated_at
+    `SELECT id, title, auto_approve, token_usage, created_at, updated_at
      FROM sessions WHERE id = $1`,
     [id],
   );
@@ -127,8 +128,47 @@ export async function updateSessionTitle(
 ): Promise<Session | null> {
   const result = await pool.query(
     `UPDATE sessions SET title = $1, updated_at = now() WHERE id = $2
-     RETURNING id, title, created_at, updated_at`,
+     RETURNING id, title, auto_approve, created_at, updated_at`,
     [title, id],
+  );
+  if (result.rows.length === 0) return null;
+  return rowToSession(result.rows[0]);
+}
+
+export async function getSessionAutoApprove(sessionId: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT auto_approve FROM sessions WHERE id = $1`,
+    [sessionId],
+  );
+  if (result.rows.length === 0) return false;
+  return result.rows[0].auto_approve as boolean;
+}
+
+export async function updateSession(
+  id: string,
+  updates: { title?: string; autoApprove?: boolean },
+): Promise<Session | null> {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let idx = 1;
+
+  if (updates.title !== undefined) {
+    sets.push(`title = $${idx++}`);
+    values.push(updates.title);
+  }
+  if (updates.autoApprove !== undefined) {
+    sets.push(`auto_approve = $${idx++}`);
+    values.push(updates.autoApprove);
+  }
+  if (sets.length === 0) return null;
+
+  sets.push("updated_at = now()");
+  values.push(id);
+
+  const result = await pool.query(
+    `UPDATE sessions SET ${sets.join(", ")} WHERE id = $${idx}
+     RETURNING id, title, auto_approve, created_at, updated_at`,
+    values,
   );
   if (result.rows.length === 0) return null;
   return rowToSession(result.rows[0]);

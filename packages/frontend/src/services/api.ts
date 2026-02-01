@@ -75,6 +75,13 @@ export async function updateSessionTitleApi(
   return wsClient.request<Session>("sessions.update", { id, title });
 }
 
+export async function updateSessionAutoApproveApi(
+  id: string,
+  autoApprove: boolean,
+): Promise<Session> {
+  return wsClient.request<Session>("sessions.update", { id, autoApprove });
+}
+
 export function watchSessionApi(sessionId: string): Promise<void> {
   return wsClient.request("sessions.watch", { sessionId }).then(() => {});
 }

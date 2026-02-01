@@ -8,6 +8,7 @@ import {
   getSession,
   getMessages,
   updateSessionTitle,
+  updateSession,
   deleteSession,
   addMessage,
   updateMessage,
@@ -66,13 +67,21 @@ router.get("/sessions/:id", async (req, res) => {
 });
 
 router.patch("/sessions/:id", async (req, res) => {
-  const schema = z.object({ title: z.string().min(1).max(200) });
+  const schema = z.object({
+    title: z.string().min(1).max(200).optional(),
+    autoApprove: z.boolean().optional(),
+  }).refine((d) => d.title !== undefined || d.autoApprove !== undefined, {
+    message: "At least one of title or autoApprove must be provided",
+  });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  const session = await updateSessionTitle(req.params.id, parsed.data.title);
+  const session = await updateSession(req.params.id, {
+    title: parsed.data.title,
+    autoApprove: parsed.data.autoApprove,
+  });
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;

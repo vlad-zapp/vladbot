@@ -13,12 +13,12 @@ import {
   updateMessage,
   updateSessionTokenUsage,
   atomicApprove,
+  getSessionAutoApprove,
 } from "./sessionStore.js";
 import { executeToolCalls, validateToolCalls } from "./tools/index.js";
 import { getProvider } from "./ai/ProviderFactory.js";
 import { classifyLLMError } from "./ai/errorClassifier.js";
 import { autoCompactIfNeeded } from "./autoCompact.js";
-import { getRuntimeSetting } from "../config/runtimeSettings.js";
 import { VERBATIM_TAIL_COUNT } from "@vladbot/shared";
 import { estimateMessageTokens } from "./tokenCounter.js";
 import {
@@ -420,9 +420,9 @@ async function streamNextRound(
       }
     }
 
-    // Auto-approve: re-read setting from DB each round so mid-stream toggles take effect
-    const autoApproveSetting = await getRuntimeSetting("auto_approve");
-    if (hasToolCalls && autoApproveSetting === "true") {
+    // Auto-approve: re-read from session each round so mid-stream toggles take effect
+    const autoApprove = await getSessionAutoApprove(sessionId);
+    if (hasToolCalls && autoApprove) {
       const approved = await atomicApprove(newAssistantId);
       if (approved) {
         pushEvent(sessionId, { type: "auto_approved", data: { messageId: newAssistantId } });

@@ -17,6 +17,7 @@ vi.mock("../services/sessionStore.js", () => ({
   updateMessage: (...args: unknown[]) => mockUpdateMessage(...args),
   updateSessionTokenUsage: (...args: unknown[]) => mockUpdateSessionTokenUsage(...args),
   atomicApprove: vi.fn().mockResolvedValue(true),
+  getSessionAutoApprove: vi.fn().mockResolvedValue(false),
 }));
 
 const mockValidateToolCalls = vi.fn().mockReturnValue([]);
@@ -84,10 +85,6 @@ vi.mock("../config/env.js", () => ({
     VNC_COORDINATE_BACKEND: "vision",
     SHOWUI_API_URL: "",
   },
-}));
-
-vi.mock("../config/runtimeSettings.js", () => ({
-  getRuntimeSetting: vi.fn().mockResolvedValue("false"),
 }));
 
 vi.mock("../services/autoCompact.js", () => ({

@@ -71,7 +71,7 @@ export interface WsMethods {
   "sessions.list": { payload: {}; result: unknown[] };
   "sessions.create": { payload: { title?: string }; result: unknown };
   "sessions.get": { payload: { id: string }; result: unknown };
-  "sessions.update": { payload: { id: string; title: string }; result: unknown };
+  "sessions.update": { payload: { id: string; title?: string; autoApprove?: boolean }; result: unknown };
   "sessions.delete": { payload: { id: string }; result: {} };
   "sessions.lastActive.get": { payload: {}; result: { sessionId: string | null } };
   "sessions.lastActive.set": { payload: { sessionId: string }; result: {} };

@@ -30,6 +30,8 @@ const mockSessionStore = {
   getSession: vi.fn(),
   getMessages: vi.fn(),
   updateSessionTitle: vi.fn(),
+  updateSession: vi.fn(),
+  getSessionAutoApprove: vi.fn(),
   deleteSession: vi.fn(),
   addMessage: vi.fn(),
   updateMessage: vi.fn(),
@@ -277,9 +279,10 @@ describe("Session routes", () => {
 
   describe("PATCH /api/sessions/:id", () => {
     it("updates session title", async () => {
-      mockSessionStore.updateSessionTitle.mockResolvedValueOnce({
+      mockSessionStore.updateSession.mockResolvedValueOnce({
         id: "s1",
         title: "Updated",
+        autoApprove: false,
         createdAt: "2025-01-01",
         updatedAt: "2025-01-02",
       });
@@ -294,6 +297,25 @@ describe("Session routes", () => {
       expect(body.title).toBe("Updated");
     });
 
+    it("updates autoApprove", async () => {
+      mockSessionStore.updateSession.mockResolvedValueOnce({
+        id: "s1",
+        title: "Chat",
+        autoApprove: true,
+        createdAt: "2025-01-01",
+        updatedAt: "2025-01-02",
+      });
+
+      const res = await fetch(`${base}/sessions/s1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ autoApprove: true }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.autoApprove).toBe(true);
+    });
+
     it("returns 400 for empty title", async () => {
       const res = await fetch(`${base}/sessions/s1`, {
         method: "PATCH",
@@ -303,8 +325,17 @@ describe("Session routes", () => {
       expect(res.status).toBe(400);
     });
 
+    it("returns 400 when no fields provided", async () => {
+      const res = await fetch(`${base}/sessions/s1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(400);
+    });
+
     it("returns 404 for missing session", async () => {
-      mockSessionStore.updateSessionTitle.mockResolvedValueOnce(null);
+      mockSessionStore.updateSession.mockResolvedValueOnce(null);
 
       const res = await fetch(`${base}/sessions/nonexistent`, {
         method: "PATCH",

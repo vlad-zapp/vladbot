@@ -23,11 +23,13 @@ export default function App() {
   const {
     sessions,
     activeSessionId,
+    activeSession,
     loading: sessionsLoading,
     createNewSession,
     deleteSessionById,
     selectSession,
     updateLocalSessionTitle,
+    setSessionAutoApprove,
   } = useSessions();
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -60,9 +62,10 @@ export default function App() {
 
   const handleAutoApproveChange = useCallback(
     (value: boolean) => {
-      saveSettings({ auto_approve: value ? "true" : "false" }).catch(console.error);
+      if (!activeSessionId) return;
+      setSessionAutoApprove(activeSessionId, value);
     },
-    [saveSettings],
+    [activeSessionId, setSessionAutoApprove],
   );
 
   const handleVisionModelChange = useCallback(
@@ -113,7 +116,7 @@ export default function App() {
     activeSessionId,
     createNewSession,
     updateLocalSessionTitle,
-    settings?.auto_approve === "true",
+    activeSession?.autoApprove ?? false,
     handleAutoApproveChange,
   );
 

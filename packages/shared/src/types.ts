@@ -124,6 +124,7 @@ export interface ModelInfo {
 export interface Session {
   id: string;
   title: string;
+  autoApprove: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -192,7 +193,6 @@ export interface AppSettings {
   system_prompt: string;
   context_compaction_threshold: string;
   compaction_verbatim_budget: string;
-  auto_approve: string;
-  last_active_session_id: string;
+
   messages_page_size: string;
 }

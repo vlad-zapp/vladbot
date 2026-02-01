@@ -14,8 +14,7 @@ const ENV_DEFAULTS: Record<keyof AppSettings, () => string> = {
   system_prompt: () => "",
   context_compaction_threshold: () => "90",
   compaction_verbatim_budget: () => "40",
-  auto_approve: () => "false",
-  last_active_session_id: () => "",
+
   messages_page_size: () => "30",
 };
 

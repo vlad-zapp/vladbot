@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Session, SSEEvent } from "@vladbot/shared";
 import {
   fetchSessions,
   createSessionApi,
   deleteSessionApi,
   updateSessionTitleApi,
+  updateSessionAutoApproveApi,
   fetchLastActiveSession,
   saveLastActiveSession,
 } from "../services/api.js";
@@ -99,13 +100,30 @@ export function useSessions() {
     [],
   );
 
+  const activeSession = useMemo(
+    () => sessions.find((s) => s.id === activeSessionId) ?? null,
+    [sessions, activeSessionId],
+  );
+
+  const setSessionAutoApprove = useCallback(
+    (id: string, value: boolean) => {
+      setSessions((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, autoApprove: value } : s)),
+      );
+      updateSessionAutoApproveApi(id, value).catch(console.error);
+    },
+    [],
+  );
+
   return {
     sessions,
     activeSessionId,
+    activeSession,
     loading,
     createNewSession,
     deleteSessionById,
     selectSession,
     updateLocalSessionTitle,
+    setSessionAutoApprove,
   };
 }

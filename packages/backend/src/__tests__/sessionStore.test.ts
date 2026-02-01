@@ -15,6 +15,8 @@ const {
   listSessions,
   getSession,
   updateSessionTitle,
+  updateSession,
+  getSessionAutoApprove,
   deleteSession,
   addMessage,
   updateMessage,
@@ -36,6 +38,7 @@ describe("createSession", () => {
       rows: [{
         id: "abc-123",
         title: "New chat",
+        auto_approve: false,
         created_at: now,
         updated_at: now,
       }],
@@ -61,6 +64,7 @@ describe("createSession", () => {
       rows: [{
         id: "abc-456",
         title: "My Title",
+        auto_approve: false,
         created_at: now,
         updated_at: now,
       }],
@@ -78,8 +82,8 @@ describe("listSessions", () => {
     const now = new Date();
     mockQuery.mockResolvedValueOnce({
       rows: [
-        { id: "s1", title: "First", created_at: now, updated_at: now },
-        { id: "s2", title: "Second", created_at: now, updated_at: now },
+        { id: "s1", title: "First", auto_approve: false, created_at: now, updated_at: now },
+        { id: "s2", title: "Second", auto_approve: false, created_at: now, updated_at: now },
       ],
     });
 
@@ -95,7 +99,7 @@ describe("getSession", () => {
     const now = new Date();
     // Session query
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: "s1", title: "Chat", created_at: now, updated_at: now }],
+      rows: [{ id: "s1", title: "Chat", auto_approve: false, created_at: now, updated_at: now }],
     });
     // Messages query
     mockQuery.mockResolvedValueOnce({
@@ -132,7 +136,7 @@ describe("getSession", () => {
     const now = new Date();
     const toolCalls = [{ id: "tc1", name: "filesystem", arguments: { op: "list" } }];
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: "s1", title: "Chat", created_at: now, updated_at: now }],
+      rows: [{ id: "s1", title: "Chat", auto_approve: false, created_at: now, updated_at: now }],
     });
     mockQuery.mockResolvedValueOnce({
       rows: [{
@@ -157,7 +161,7 @@ describe("updateSessionTitle", () => {
   it("returns updated session", async () => {
     const now = new Date();
     mockQuery.mockResolvedValueOnce({
-      rows: [{ id: "s1", title: "New Title", created_at: now, updated_at: now }],
+      rows: [{ id: "s1", title: "New Title", auto_approve: false, created_at: now, updated_at: now }],
     });
 
     const session = await updateSessionTitle("s1", "New Title");
@@ -485,5 +489,101 @@ describe("atomicApprove", () => {
 
     const result = await atomicApprove("msg-1");
     expect(result).toBe(false);
+  });
+});
+
+describe("getSessionAutoApprove", () => {
+  it("returns true when auto_approve is enabled", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ auto_approve: true }],
+    });
+
+    const result = await getSessionAutoApprove("s1");
+    expect(result).toBe(true);
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("SELECT auto_approve FROM sessions");
+    expect(params).toEqual(["s1"]);
+  });
+
+  it("returns false when auto_approve is disabled", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ auto_approve: false }],
+    });
+
+    const result = await getSessionAutoApprove("s1");
+    expect(result).toBe(false);
+  });
+
+  it("returns false for missing session", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getSessionAutoApprove("nonexistent");
+    expect(result).toBe(false);
+  });
+});
+
+describe("updateSession", () => {
+  it("updates title only", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "Updated", auto_approve: false, created_at: now, updated_at: now }],
+    });
+
+    const session = await updateSession("s1", { title: "Updated" });
+    expect(session).not.toBeNull();
+    expect(session!.title).toBe("Updated");
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("UPDATE sessions SET");
+    expect(sql).toContain("title =");
+    expect(sql).not.toContain("auto_approve =");
+    expect(params).toContain("Updated");
+    expect(params).toContain("s1");
+  });
+
+  it("updates autoApprove only", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "Chat", auto_approve: true, created_at: now, updated_at: now }],
+    });
+
+    const session = await updateSession("s1", { autoApprove: true });
+    expect(session).not.toBeNull();
+    expect(session!.autoApprove).toBe(true);
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("auto_approve =");
+    expect(sql).not.toContain("title =");
+    expect(params).toContain(true);
+    expect(params).toContain("s1");
+  });
+
+  it("updates both title and autoApprove", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "New", auto_approve: true, created_at: now, updated_at: now }],
+    });
+
+    const session = await updateSession("s1", { title: "New", autoApprove: true });
+    expect(session).not.toBeNull();
+    expect(session!.title).toBe("New");
+    expect(session!.autoApprove).toBe(true);
+
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain("title =");
+    expect(sql).toContain("auto_approve =");
+  });
+
+  it("returns null when no fields provided", async () => {
+    const session = await updateSession("s1", {});
+    expect(session).toBeNull();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  it("returns null for missing session", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    const session = await updateSession("nonexistent", { title: "X" });
+    expect(session).toBeNull();
   });
 });
