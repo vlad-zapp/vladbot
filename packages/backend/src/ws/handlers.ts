@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ChatMessage, ModelInfo, SSEEvent } from "@vladbot/shared";
-import { AVAILABLE_MODELS } from "@vladbot/shared";
+import { AVAILABLE_MODELS, findModel, formatModelField } from "@vladbot/shared";
 import { registerHandler, watchSession, unwatchSession, getSessionWatchers } from "./wsServer.js";
 import { env } from "../config/env.js";
 import {
@@ -12,7 +12,7 @@ import {
   updateSessionTitle,
   updateSession,
   getSessionAutoApprove,
-  getSessionModelInfo,
+  getSessionModel,
   deleteSession,
   addMessage,
   updateMessage,
@@ -104,24 +104,25 @@ const providerKeyMap: Record<string, string> = {
 /**
  * Resolve the model for a session from the DB.
  * Legacy sessions (NULL model) are lazy-migrated to the default model.
+ * Model field uses "provider:modelId" format.
  */
 async function resolveSessionModel(sessionId: string): Promise<ModelInfo> {
-  const info = await getSessionModelInfo(sessionId);
-  if (!info) throw new WsError(404, "Session not found");
+  const storedModel = await getSessionModel(sessionId);
+  if (storedModel === null) throw new WsError(404, "Session not found");
 
-  if (info.model) {
-    const modelInfo = AVAILABLE_MODELS.find((m) => m.id === info.model);
+  if (storedModel) {
+    const modelInfo = findModel(storedModel);
     if (modelInfo) return modelInfo;
   }
 
   // Legacy session or unknown model — fall back to default_model setting
-  const defaultModelId = await getSetting("default_model");
+  const defaultModelSetting = await getSetting("default_model");
   const defaultModel =
-    (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+    (defaultModelSetting && findModel(defaultModelSetting)) ||
     AVAILABLE_MODELS[0];
 
   // Lazy-migrate
-  await updateSession(sessionId, { model: defaultModel.id, provider: defaultModel.provider });
+  await updateSession(sessionId, { model: formatModelField(defaultModel) });
 
   return defaultModel;
 }
@@ -167,16 +168,17 @@ registerHandler("sessions.create", async (payload, ctx) => {
   // Resolve model: explicit param > default_model setting > first available
   let modelInfo: ModelInfo | undefined;
   if (parsed.data.model) {
-    modelInfo = AVAILABLE_MODELS.find((m) => m.id === parsed.data.model);
+    modelInfo = findModel(parsed.data.model);
   }
   if (!modelInfo) {
-    const defaultModelId = await getSetting("default_model");
+    const defaultModelSetting = await getSetting("default_model");
     modelInfo =
-      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      (defaultModelSetting && findModel(defaultModelSetting)) ||
       AVAILABLE_MODELS[0];
   }
 
-  const session = await createSession(parsed.data.title, modelInfo.id, modelInfo.provider);
+  const visionModel = await getSetting("vision_model") ?? "";
+  const session = await createSession(parsed.data.title, formatModelField(modelInfo), visionModel);
   ctx.broadcastGlobal("__sessions__", { type: "session_created", data: session });
   return session;
 });
@@ -195,17 +197,22 @@ registerHandler("sessions.update", async (payload, ctx) => {
     id: z.string().min(1),
     title: z.string().min(1).max(200).optional(),
     autoApprove: z.boolean().optional(),
-  }).refine((d) => d.title !== undefined || d.autoApprove !== undefined, {
-    message: "At least one of title or autoApprove must be provided",
+    visionModel: z.string().optional(),
+  }).refine((d) => d.title !== undefined || d.autoApprove !== undefined || d.visionModel !== undefined, {
+    message: "At least one of title, autoApprove, or visionModel must be provided",
   });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
   const session = await updateSession(parsed.data.id, {
     title: parsed.data.title,
     autoApprove: parsed.data.autoApprove,
+    visionModel: parsed.data.visionModel,
   });
   if (!session) throw new WsError(404, "Session not found");
-  ctx.broadcastGlobal("__sessions__", { type: "session_updated", data: session });
+  // Broadcast to ALL clients including sender
+  const sessionEvent = { type: "session_updated" as const, data: session };
+  ctx.push("__sessions__", sessionEvent);
+  ctx.broadcastGlobal("__sessions__", sessionEvent);
   return session;
 });
 
@@ -542,14 +549,18 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
 
   const { sessionId, newModel } = parsed.data;
-  const newModelInfo = AVAILABLE_MODELS.find((m) => m.id === newModel);
+  const newModelInfo = findModel(newModel);
   if (!newModelInfo) throw new WsError(400, "Unknown model");
 
-  // Persist model/provider on the session
-  const updatedSession = await updateSession(sessionId, {
-    model: newModelInfo.id,
-    provider: newModelInfo.provider,
-  });
+  // Persist model on the session.
+  // If the new model has native vision, auto-clear the session's vision override.
+  const sessionUpdates: { model: string; visionModel?: string } = {
+    model: formatModelField(newModelInfo),
+  };
+  if (newModelInfo.nativeVision) {
+    sessionUpdates.visionModel = "";
+  }
+  const updatedSession = await updateSession(sessionId, sessionUpdates);
   if (!updatedSession) throw new WsError(404, "Session not found");
 
   // Broadcast so ALL clients see the new model (including sender)
@@ -778,6 +789,7 @@ registerHandler("chat.stream", async (payload, ctx) => {
         model,
         tools,
         stream?.abortController.signal,
+        sessionId,
       );
       let hasToolCalls = false;
 

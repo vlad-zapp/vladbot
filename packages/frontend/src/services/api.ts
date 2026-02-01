@@ -81,6 +81,13 @@ export async function updateSessionAutoApproveApi(
   return wsClient.request<Session>("sessions.update", { id, autoApprove });
 }
 
+export async function updateSessionVisionModelApi(
+  id: string,
+  visionModel: string,
+): Promise<Session> {
+  return wsClient.request<Session>("sessions.update", { id, visionModel });
+}
+
 export function watchSessionApi(sessionId: string): Promise<void> {
   return wsClient.request("sessions.watch", { sessionId }).then(() => {});
 }

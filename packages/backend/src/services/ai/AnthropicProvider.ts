@@ -20,6 +20,7 @@ export class AnthropicProvider implements AIProviderInterface {
 
   private async convertMessages(
     messages: MessagePart[],
+    sessionId?: string,
   ): Promise<Anthropic.Messages.MessageParam[]> {
     const result: Anthropic.Messages.MessageParam[] = [];
 
@@ -34,7 +35,7 @@ export class AnthropicProvider implements AIProviderInterface {
       const msg = messages[i];
       if (msg.role === "user") {
         if (msg.images?.length) {
-          const useVisionOverride = await hasVisionModelAsync();
+          const useVisionOverride = await hasVisionModelAsync(sessionId);
           if (useVisionOverride) {
             // Vision model override: store image for vision_analyze tool
             const resolved = await resolveImageToBase64(msg.images[0]);
@@ -87,7 +88,7 @@ export class AnthropicProvider implements AIProviderInterface {
         // Anthropic expects tool results as user messages with tool_result blocks
         const content: Anthropic.Messages.ToolResultBlockParam[] = [];
         const includeImages = i === lastToolIdx;
-        const useVisionOverride = await hasVisionModelAsync();
+        const useVisionOverride = await hasVisionModelAsync(sessionId);
         if (msg.toolResults) {
           for (const tr of msg.toolResults) {
             const extracted = await extractToolResultImage(tr.output);
@@ -150,12 +151,13 @@ export class AnthropicProvider implements AIProviderInterface {
     messages: MessagePart[],
     model: string,
     tools?: ToolDefinition[],
+    sessionId?: string,
   ): Promise<{ text: string; toolCalls: ToolCall[]; usage?: { inputTokens: number; outputTokens: number } }> {
     const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
       model,
       max_tokens: 4096,
       system: await getSystemPrompt(),
-      messages: await this.convertMessages(messages),
+      messages: await this.convertMessages(messages, sessionId),
     };
     if (tools?.length) {
       params.tools = this.convertTools(tools);
@@ -190,12 +192,13 @@ export class AnthropicProvider implements AIProviderInterface {
     model: string,
     tools?: ToolDefinition[],
     signal?: AbortSignal,
+    sessionId?: string,
   ): AsyncIterable<StreamChunk> {
     const params: Anthropic.Messages.MessageCreateParamsNonStreaming = {
       model,
       max_tokens: 4096,
       system: await getSystemPrompt(),
-      messages: await this.convertMessages(messages),
+      messages: await this.convertMessages(messages, sessionId),
     };
     if (tools?.length) {
       params.tools = this.convertTools(tools);

@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { ChatMessage } from "@vladbot/shared";
 import type { SSEEvent } from "@vladbot/shared";
-import { AVAILABLE_MODELS } from "@vladbot/shared";
+import { AVAILABLE_MODELS, findModel, formatModelField } from "@vladbot/shared";
 import {
   createSession,
   listSessions,
@@ -10,7 +10,7 @@ import {
   getMessages,
   updateSessionTitle,
   updateSession,
-  getSessionModelInfo,
+  getSessionModel,
   deleteSession,
   addMessage,
   updateMessage,
@@ -72,8 +72,9 @@ router.patch("/sessions/:id", async (req, res) => {
   const schema = z.object({
     title: z.string().min(1).max(200).optional(),
     autoApprove: z.boolean().optional(),
-  }).refine((d) => d.title !== undefined || d.autoApprove !== undefined, {
-    message: "At least one of title or autoApprove must be provided",
+    visionModel: z.string().optional(),
+  }).refine((d) => d.title !== undefined || d.autoApprove !== undefined || d.visionModel !== undefined, {
+    message: "At least one of title, autoApprove, or visionModel must be provided",
   });
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) {
@@ -83,6 +84,7 @@ router.patch("/sessions/:id", async (req, res) => {
   const session = await updateSession(req.params.id, {
     title: parsed.data.title,
     autoApprove: parsed.data.autoApprove,
+    visionModel: parsed.data.visionModel,
   });
   if (!session) {
     res.status(404).json({ error: "Session not found" });
@@ -236,21 +238,19 @@ router.get("/sessions/:id/stream", (req, res) => {
 
 router.post("/sessions/:id/compact", async (req, res) => {
   const sessionId = req.params.id;
-  const info = await getSessionModelInfo(sessionId);
-  if (!info) {
+  const storedModel = await getSessionModel(sessionId);
+  if (storedModel === null) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
 
-  let modelInfo = info.model
-    ? AVAILABLE_MODELS.find((m) => m.id === info.model)
-    : undefined;
+  let modelInfo = storedModel ? findModel(storedModel) : undefined;
   if (!modelInfo) {
-    const defaultModelId = await getSetting("default_model");
+    const defaultModelSetting = await getSetting("default_model");
     modelInfo =
-      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      (defaultModelSetting && findModel(defaultModelSetting)) ||
       AVAILABLE_MODELS[0];
-    await updateSession(sessionId, { model: modelInfo.id, provider: modelInfo.provider });
+    await updateSession(sessionId, { model: formatModelField(modelInfo) });
   }
 
   try {
@@ -292,20 +292,18 @@ router.post("/sessions/:id/messages/:messageId/approve", async (req, res) => {
   const sessionId = req.params.id;
 
   // Resolve model/provider from session (server is source of truth)
-  const info = await getSessionModelInfo(sessionId);
-  if (!info) {
+  const storedModel = await getSessionModel(sessionId);
+  if (storedModel === null) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
-  let modelInfo = info.model
-    ? AVAILABLE_MODELS.find((m) => m.id === info.model)
-    : undefined;
+  let modelInfo = storedModel ? findModel(storedModel) : undefined;
   if (!modelInfo) {
-    const defaultModelId = await getSetting("default_model");
+    const defaultModelSetting = await getSetting("default_model");
     modelInfo =
-      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      (defaultModelSetting && findModel(defaultModelSetting)) ||
       AVAILABLE_MODELS[0];
-    await updateSession(sessionId, { model: modelInfo.id, provider: modelInfo.provider });
+    await updateSession(sessionId, { model: formatModelField(modelInfo) });
   }
   const tools = getToolDefinitions();
 

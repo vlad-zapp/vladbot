@@ -364,6 +364,7 @@ async function streamNextRound(
       model,
       tools as ToolDefinition[] | undefined,
       stream.abortController.signal,
+      sessionId,
     );
     let hasToolCalls = false;
 

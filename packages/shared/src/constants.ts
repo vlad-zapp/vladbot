@@ -13,6 +13,29 @@ export const AVAILABLE_MODELS: ModelInfo[] = [
 export const DEFAULT_MODEL = AVAILABLE_MODELS[0];
 
 /**
+ * Look up a model by either its bare ID ("deepseek-chat") or
+ * "provider:modelId" format ("deepseek:deepseek-chat").
+ * Handles both old and new stored formats.
+ */
+export function findModel(modelField: string): ModelInfo | undefined {
+  // Try direct bare-ID match first
+  const direct = AVAILABLE_MODELS.find((m) => m.id === modelField);
+  if (direct) return direct;
+  // Try "provider:modelId" format
+  const idx = modelField.indexOf(":");
+  if (idx > 0) {
+    const modelId = modelField.slice(idx + 1);
+    return AVAILABLE_MODELS.find((m) => m.id === modelId);
+  }
+  return undefined;
+}
+
+/** Format a ModelInfo into the "provider:modelId" storage format. */
+export function formatModelField(modelInfo: ModelInfo): string {
+  return `${modelInfo.provider}:${modelInfo.id}`;
+}
+
+/**
  * Number of recent messages to keep verbatim (not summarized) during compaction.
  * These are included as proper messages in the LLM context after the compaction
  * summary, providing precise boundary context without duplication.

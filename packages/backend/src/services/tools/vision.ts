@@ -26,7 +26,7 @@ export const visionTool: Tool = {
     },
   },
 
-  async execute(args: Record<string, unknown>): Promise<string> {
+  async execute(args: Record<string, unknown>, sessionId?: string): Promise<string> {
     const prompt = args.prompt as string;
     if (!prompt) {
       return JSON.stringify({ error: "prompt is required" });
@@ -39,7 +39,7 @@ export const visionTool: Tool = {
       });
     }
 
-    const result = await queryVisionModel(prompt, image.base64, image.mimeType);
+    const result = await queryVisionModel(prompt, image.base64, image.mimeType, sessionId);
     return JSON.stringify({ result });
   },
 };

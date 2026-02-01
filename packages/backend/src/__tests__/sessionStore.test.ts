@@ -17,6 +17,8 @@ const {
   updateSessionTitle,
   updateSession,
   getSessionAutoApprove,
+  getSessionModel,
+  getSessionVisionModel,
   deleteSession,
   addMessage,
   updateMessage,
@@ -40,7 +42,7 @@ describe("createSession", () => {
         title: "New chat",
         auto_approve: false,
         model: null,
-        provider: null,
+        vision_model: null,
         created_at: now,
         updated_at: now,
       }],
@@ -57,7 +59,7 @@ describe("createSession", () => {
     expect(session.id).toBe("abc-123");
     expect(session.title).toBe("New chat");
     expect(session.model).toBe("");
-    expect(session.provider).toBe("");
+    expect(session.visionModel).toBe("");
     expect(session.createdAt).toBe(now.toISOString());
     expect(session.updatedAt).toBe(now.toISOString());
   });
@@ -527,6 +529,106 @@ describe("getSessionAutoApprove", () => {
   });
 });
 
+describe("createSession — model and visionModel", () => {
+  it("stores model directly as provider:modelId", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: "abc-789",
+        title: "New chat",
+        auto_approve: false,
+        model: "deepseek:deepseek-chat",
+        vision_model: "gemini:gemini-2.0-flash",
+        created_at: now,
+        updated_at: now,
+      }],
+    });
+
+    const session = await createSession("New chat", "deepseek:deepseek-chat", "gemini:gemini-2.0-flash");
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("INSERT INTO sessions");
+    expect(params[2]).toBe("deepseek:deepseek-chat");
+    expect(params[3]).toBe("gemini:gemini-2.0-flash");
+
+    expect(session.model).toBe("deepseek:deepseek-chat");
+    expect(session.visionModel).toBe("gemini:gemini-2.0-flash");
+  });
+
+  it("stores null when no model provided", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{
+        id: "abc-bare",
+        title: "New chat",
+        auto_approve: false,
+        model: null,
+        vision_model: null,
+        created_at: now,
+        updated_at: now,
+      }],
+    });
+
+    await createSession("New chat");
+    const params = mockQuery.mock.calls[0][1];
+    expect(params[2]).toBeNull();
+    expect(params[3]).toBeNull();
+  });
+});
+
+describe("getSessionModel", () => {
+  it("returns model value", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ model: "deepseek:deepseek-chat" }],
+    });
+
+    const result = await getSessionModel("s1");
+    expect(result).toBe("deepseek:deepseek-chat");
+  });
+
+  it("returns empty string when model is null (not set)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ model: null }],
+    });
+
+    const result = await getSessionModel("s1");
+    expect(result).toBe("");
+  });
+
+  it("returns null for missing session", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getSessionModel("nonexistent");
+    expect(result).toBeNull();
+  });
+});
+
+describe("getSessionVisionModel", () => {
+  it("returns vision model string", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ vision_model: "gemini:gemini-2.0-flash" }],
+    });
+
+    const result = await getSessionVisionModel("s1");
+    expect(result).toBe("gemini:gemini-2.0-flash");
+  });
+
+  it("returns empty string when vision_model is null (not set)", async () => {
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ vision_model: null }],
+    });
+
+    const result = await getSessionVisionModel("s1");
+    expect(result).toBe("");
+  });
+
+  it("returns null for missing session", async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+
+    const result = await getSessionVisionModel("nonexistent");
+    expect(result).toBeNull();
+  });
+});
+
 describe("updateSession", () => {
   it("updates title only", async () => {
     const now = new Date();
@@ -589,5 +691,66 @@ describe("updateSession", () => {
     mockQuery.mockResolvedValueOnce({ rows: [] });
     const session = await updateSession("nonexistent", { title: "X" });
     expect(session).toBeNull();
+  });
+
+  it("updates visionModel", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "Chat", auto_approve: false, model: "deepseek:deepseek-chat", vision_model: "gemini:gemini-2.0-flash", created_at: now, updated_at: now }],
+    });
+
+    const session = await updateSession("s1", { visionModel: "gemini:gemini-2.0-flash" });
+    expect(session).not.toBeNull();
+    expect(session!.visionModel).toBe("gemini:gemini-2.0-flash");
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("vision_model =");
+    expect(params).toContain("gemini:gemini-2.0-flash");
+  });
+
+  it("clears visionModel with empty string", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "Chat", auto_approve: false, model: "deepseek:deepseek-chat", vision_model: "", created_at: now, updated_at: now }],
+    });
+
+    const session = await updateSession("s1", { visionModel: "" });
+    expect(session).not.toBeNull();
+    expect(session!.visionModel).toBe("");
+
+    const params = mockQuery.mock.calls[0][1];
+    expect(params).toContain("");
+  });
+
+  it("updates model — stores provider:modelId directly", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "Chat", auto_approve: false, model: "gemini:gemini-2.0-flash", vision_model: null, created_at: now, updated_at: now }],
+    });
+
+    await updateSession("s1", { model: "gemini:gemini-2.0-flash" });
+
+    const [sql, params] = mockQuery.mock.calls[0];
+    expect(sql).toContain("model =");
+    expect(sql).not.toContain("provider =");
+    expect(params).toContain("gemini:gemini-2.0-flash");
+  });
+
+  it("updates model and visionModel together", async () => {
+    const now = new Date();
+    mockQuery.mockResolvedValueOnce({
+      rows: [{ id: "s1", title: "Chat", auto_approve: false, model: "deepseek:deepseek-chat", vision_model: "", created_at: now, updated_at: now }],
+    });
+
+    const session = await updateSession("s1", {
+      model: "deepseek:deepseek-chat",
+      visionModel: "",
+    });
+    expect(session).not.toBeNull();
+
+    const [sql] = mockQuery.mock.calls[0];
+    expect(sql).toContain("model =");
+    expect(sql).toContain("vision_model =");
+    expect(sql).not.toContain("provider =");
   });
 });

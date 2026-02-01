@@ -17,7 +17,7 @@ function rowToSession(row: Record<string, unknown>): Session {
     title: row.title as string,
     autoApprove: row.auto_approve as boolean,
     model: (row.model as string) ?? "",
-    provider: (row.provider as string) ?? "",
+    visionModel: (row.vision_model as string) ?? "",
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   };
@@ -51,23 +51,26 @@ function rowToMessage(row: Record<string, unknown>): ChatMessage {
 
 // Public API
 
+/**
+ * Create a new session. `model` should be in "provider:modelId" format.
+ */
 export async function createSession(
   title: string = "New chat",
   model?: string,
-  provider?: string,
+  visionModel?: string,
 ): Promise<Session> {
   const id = uuid();
   const result = await pool.query(
-    `INSERT INTO sessions (id, title, model, provider) VALUES ($1, $2, $3, $4)
-     RETURNING id, title, auto_approve, model, provider, created_at, updated_at`,
-    [id, title, model ?? null, provider ?? null],
+    `INSERT INTO sessions (id, title, model, vision_model) VALUES ($1, $2, $3, $4)
+     RETURNING id, title, auto_approve, model, vision_model, created_at, updated_at`,
+    [id, title, model ?? null, visionModel ?? null],
   );
   return rowToSession(result.rows[0]);
 }
 
 export async function listSessions(): Promise<Session[]> {
   const result = await pool.query(
-    `SELECT id, title, auto_approve, model, provider, created_at, updated_at
+    `SELECT id, title, auto_approve, model, vision_model, created_at, updated_at
      FROM sessions ORDER BY updated_at DESC`,
   );
   return result.rows.map(rowToSession);
@@ -75,7 +78,7 @@ export async function listSessions(): Promise<Session[]> {
 
 export async function getSession(id: string): Promise<SessionWithMessages | null> {
   const sessionResult = await pool.query(
-    `SELECT id, title, auto_approve, model, provider, token_usage, created_at, updated_at
+    `SELECT id, title, auto_approve, model, vision_model, token_usage, created_at, updated_at
      FROM sessions WHERE id = $1`,
     [id],
   );
@@ -134,7 +137,7 @@ export async function updateSessionTitle(
 ): Promise<Session | null> {
   const result = await pool.query(
     `UPDATE sessions SET title = $1, updated_at = now() WHERE id = $2
-     RETURNING id, title, auto_approve, model, provider, created_at, updated_at`,
+     RETURNING id, title, auto_approve, model, vision_model, created_at, updated_at`,
     [title, id],
   );
   if (result.rows.length === 0) return null;
@@ -150,9 +153,12 @@ export async function getSessionAutoApprove(sessionId: string): Promise<boolean>
   return result.rows[0].auto_approve as boolean;
 }
 
+/**
+ * Update a session. `model` should be in "provider:modelId" format.
+ */
 export async function updateSession(
   id: string,
-  updates: { title?: string; autoApprove?: boolean; model?: string; provider?: string },
+  updates: { title?: string; autoApprove?: boolean; model?: string; visionModel?: string },
 ): Promise<Session | null> {
   const sets: string[] = [];
   const values: unknown[] = [];
@@ -170,9 +176,9 @@ export async function updateSession(
     sets.push(`model = $${idx++}`);
     values.push(updates.model);
   }
-  if (updates.provider !== undefined) {
-    sets.push(`provider = $${idx++}`);
-    values.push(updates.provider);
+  if (updates.visionModel !== undefined) {
+    sets.push(`vision_model = $${idx++}`);
+    values.push(updates.visionModel);
   }
   if (sets.length === 0) return null;
 
@@ -181,25 +187,41 @@ export async function updateSession(
 
   const result = await pool.query(
     `UPDATE sessions SET ${sets.join(", ")} WHERE id = $${idx}
-     RETURNING id, title, auto_approve, model, provider, created_at, updated_at`,
+     RETURNING id, title, auto_approve, model, vision_model, created_at, updated_at`,
     values,
   );
   if (result.rows.length === 0) return null;
   return rowToSession(result.rows[0]);
 }
 
-export async function getSessionModelInfo(
+/**
+ * Returns the model in "provider:modelId" format.
+ * null = session not found, "" = no model set.
+ */
+export async function getSessionModel(
   sessionId: string,
-): Promise<{ model: string; provider: string } | null> {
+): Promise<string | null> {
   const result = await pool.query(
-    `SELECT model, provider FROM sessions WHERE id = $1`,
+    `SELECT model FROM sessions WHERE id = $1`,
     [sessionId],
   );
   if (result.rows.length === 0) return null;
-  return {
-    model: (result.rows[0].model as string) ?? "",
-    provider: (result.rows[0].provider as string) ?? "",
-  };
+  return (result.rows[0].model as string) ?? "";
+}
+
+/**
+ * Returns the vision model in "provider:modelId" format.
+ * null = session not found, "" = no vision model set.
+ */
+export async function getSessionVisionModel(
+  sessionId: string,
+): Promise<string | null> {
+  const result = await pool.query(
+    `SELECT vision_model FROM sessions WHERE id = $1`,
+    [sessionId],
+  );
+  if (result.rows.length === 0) return null;
+  return (result.rows[0].vision_model as string) ?? "";
 }
 
 export async function deleteSession(id: string): Promise<boolean> {

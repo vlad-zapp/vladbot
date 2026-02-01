@@ -13,6 +13,7 @@ export interface AIProviderInterface {
     messages: MessagePart[],
     model: string,
     tools?: ToolDefinition[],
+    sessionId?: string,
   ): Promise<{ text: string; toolCalls: ToolCall[]; usage?: { inputTokens: number; outputTokens: number } }>;
 
   generateStream(
@@ -20,5 +21,6 @@ export interface AIProviderInterface {
     model: string,
     tools?: ToolDefinition[],
     signal?: AbortSignal,
+    sessionId?: string,
   ): AsyncIterable<StreamChunk>;
 }

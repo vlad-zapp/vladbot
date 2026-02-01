@@ -1,9 +1,9 @@
 import { Router } from "express";
 import type { SSEEvent } from "@vladbot/shared";
-import { AVAILABLE_MODELS } from "@vladbot/shared";
+import { AVAILABLE_MODELS, findModel, formatModelField } from "@vladbot/shared";
 import { getProvider } from "../services/ai/ProviderFactory.js";
 import { executeToolCalls, validateToolCalls, getToolDefinitions } from "../services/tools/index.js";
-import { addMessage, getSession, getSessionModelInfo, updateSession, updateSessionTokenUsage, updateMessage } from "../services/sessionStore.js";
+import { addMessage, getSession, getSessionModel, updateSession, updateSessionTokenUsage, updateMessage } from "../services/sessionStore.js";
 import {
   createStream,
   pushEvent,
@@ -27,20 +27,18 @@ router.post("/chat/stream", async (req, res) => {
   const { sessionId, assistantId } = parsed.data;
 
   // Resolve model/provider from session (server is source of truth)
-  const sessionModelInfo = await getSessionModelInfo(sessionId);
-  if (!sessionModelInfo) {
+  const storedModel = await getSessionModel(sessionId);
+  if (storedModel === null) {
     res.status(404).json({ error: "Session not found" });
     return;
   }
-  let modelInfo = sessionModelInfo.model
-    ? AVAILABLE_MODELS.find((m) => m.id === sessionModelInfo.model)
-    : undefined;
+  let modelInfo = storedModel ? findModel(storedModel) : undefined;
   if (!modelInfo) {
-    const defaultModelId = await getSetting("default_model");
+    const defaultModelSetting = await getSetting("default_model");
     modelInfo =
-      (defaultModelId && AVAILABLE_MODELS.find((m) => m.id === defaultModelId)) ||
+      (defaultModelSetting && findModel(defaultModelSetting)) ||
       AVAILABLE_MODELS[0];
-    await updateSession(sessionId, { model: modelInfo.id, provider: modelInfo.provider });
+    await updateSession(sessionId, { model: formatModelField(modelInfo) });
   }
   const model = modelInfo.id;
   const providerName = modelInfo.provider;
@@ -87,6 +85,8 @@ router.post("/chat/stream", async (req, res) => {
       history,
       model,
       tools,
+      undefined,
+      sessionId,
     );
     let hasToolCalls = false;
 

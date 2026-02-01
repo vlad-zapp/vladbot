@@ -21,6 +21,7 @@ export class GeminiProvider implements AIProviderInterface {
 
   private async convertMessages(
     messages: MessagePart[],
+    sessionId?: string,
   ): Promise<{ role: "user" | "model"; parts: Record<string, unknown>[] }[]> {
     const result: {
       role: "user" | "model";
@@ -38,7 +39,7 @@ export class GeminiProvider implements AIProviderInterface {
       const msg = messages[i];
       if (msg.role === "user") {
         if (msg.images?.length) {
-          const useVisionOverride = await hasVisionModelAsync();
+          const useVisionOverride = await hasVisionModelAsync(sessionId);
           if (useVisionOverride) {
             // Vision model override: store image for vision_analyze tool
             const resolved = await resolveImageToBase64(msg.images[0]);
@@ -83,7 +84,7 @@ export class GeminiProvider implements AIProviderInterface {
         // Gemini expects function responses as user role parts
         const parts: Record<string, unknown>[] = [];
         const includeImages = i === lastToolIdx;
-        const useVisionOverride = await hasVisionModelAsync();
+        const useVisionOverride = await hasVisionModelAsync(sessionId);
         if (msg.toolResults) {
           for (const tr of msg.toolResults) {
             const toolName = findToolName(messages, tr.toolCallId);
@@ -148,8 +149,9 @@ export class GeminiProvider implements AIProviderInterface {
     messages: MessagePart[],
     model: string,
     tools?: ToolDefinition[],
+    sessionId?: string,
   ): Promise<{ text: string; toolCalls: ToolCall[]; usage?: { inputTokens: number; outputTokens: number } }> {
-    const contents = await this.convertMessages(messages);
+    const contents = await this.convertMessages(messages, sessionId);
     const config: Record<string, unknown> = {
       systemInstruction: await getSystemPrompt(),
     };
@@ -193,8 +195,9 @@ export class GeminiProvider implements AIProviderInterface {
     model: string,
     tools?: ToolDefinition[],
     signal?: AbortSignal,
+    sessionId?: string,
   ): AsyncIterable<StreamChunk> {
-    const contents = await this.convertMessages(messages);
+    const contents = await this.convertMessages(messages, sessionId);
     const config: Record<string, unknown> = {
       systemInstruction: await getSystemPrompt(),
     };

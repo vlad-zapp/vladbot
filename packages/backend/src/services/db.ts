@@ -68,6 +68,18 @@ await pool.query(`
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS auto_approve BOOLEAN NOT NULL DEFAULT false;
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS model TEXT;
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS provider TEXT;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS vision_model TEXT;
+
+  -- Migrate old rows: merge provider + model into "provider:model" format
+  UPDATE sessions
+    SET model = provider || ':' || model
+    WHERE provider IS NOT NULL
+      AND provider != ''
+      AND model IS NOT NULL
+      AND model != ''
+      AND model NOT LIKE '%:%';
+
+  ALTER TABLE sessions DROP COLUMN IF EXISTS provider;
 
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,

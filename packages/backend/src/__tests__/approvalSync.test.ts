@@ -51,7 +51,7 @@ vi.mock("../services/sessionStore.js", () => ({
   createSession: vi.fn(),
   listSessions: vi.fn(),
   getSession: (...args: unknown[]) => mockGetSession(...args),
-  getSessionModelInfo: (...args: unknown[]) => mockGetSessionModelInfo(...args),
+  getSessionModel: (...args: unknown[]) => mockGetSessionModelInfo(...args),
   getMessages: vi.fn(),
   updateSessionTitle: vi.fn(),
   updateSession: (...args: unknown[]) => mockUpdateSession(...args),
@@ -187,8 +187,8 @@ function baseSession(approvalStatus = "pending") {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetSessionWatchers.mockReturnValue([]);
-  // Default: session has a known model/provider
-  mockGetSessionModelInfo.mockResolvedValue({ model: MODEL, provider: PROVIDER });
+  // Default: session has a known model in "provider:modelId" format
+  mockGetSessionModelInfo.mockResolvedValue(`${PROVIDER}:${MODEL}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -357,8 +357,8 @@ describe("sessions.switchModel — cross-client sync", () => {
   const updatedSession = {
     id: SESSION_ID,
     title: "Test",
-    model: MODEL,
-    provider: PROVIDER,
+    model: `${PROVIDER}:${MODEL}`,
+    visionModel: "",
     autoApprove: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -436,6 +436,142 @@ describe("sessions.switchModel — cross-client sync", () => {
     expect(ctx.broadcastToSession).toHaveBeenCalledWith(
       SESSION_ID,
       { type: "compaction", data: compactionMsg },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sessions.switchModel — auto-resets visionModel on native-vision model
+// ---------------------------------------------------------------------------
+
+describe("sessions.switchModel — visionModel auto-reset", () => {
+  it("clears visionModel when switching to a model with nativeVision: true", async () => {
+    const handler = capturedHandlers.get("sessions.switchModel")!;
+    const ctx = makeCtx();
+
+    // Anthropic models have nativeVision: true
+    const nativeVisionModel = "claude-sonnet-4-20250514";
+    const updatedSession = {
+      id: SESSION_ID,
+      title: "Test",
+      model: `anthropic:${nativeVisionModel}`,
+      visionModel: "",
+      autoApprove: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockUpdateSession.mockResolvedValueOnce(updatedSession);
+    mockGetSession.mockResolvedValueOnce({ ...updatedSession, messages: [] });
+
+    await handler(
+      { sessionId: SESSION_ID, newModel: nativeVisionModel },
+      ctx,
+    );
+
+    // updateSession should have been called with visionModel: ""
+    expect(mockUpdateSession).toHaveBeenCalledWith(SESSION_ID, expect.objectContaining({
+      visionModel: "",
+    }));
+  });
+
+  it("does not clear visionModel when switching to a non-native-vision model", async () => {
+    const handler = capturedHandlers.get("sessions.switchModel")!;
+    const ctx = makeCtx();
+
+    // DeepSeek models have nativeVision: false
+    const nonVisionModel = "deepseek-chat";
+    const updatedSession = {
+      id: SESSION_ID,
+      title: "Test",
+      model: `deepseek:${nonVisionModel}`,
+      visionModel: "gemini:gemini-2.0-flash",
+      autoApprove: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockUpdateSession.mockResolvedValueOnce(updatedSession);
+    mockGetSession.mockResolvedValueOnce({ ...updatedSession, messages: [] });
+
+    await handler(
+      { sessionId: SESSION_ID, newModel: nonVisionModel },
+      ctx,
+    );
+
+    // updateSession should NOT have visionModel in the update
+    const updateCall = mockUpdateSession.mock.calls[0];
+    expect(updateCall[1]).not.toHaveProperty("visionModel");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sessions.update — visionModel cross-client sync
+// ---------------------------------------------------------------------------
+
+describe("sessions.update — visionModel cross-client sync", () => {
+  it("broadcasts session_updated to sender and all clients when visionModel changes", async () => {
+    const handler = capturedHandlers.get("sessions.update")!;
+    const ctx = makeCtx();
+
+    const updatedSession = {
+      id: SESSION_ID,
+      title: "Test",
+      model: `${PROVIDER}:${MODEL}`,
+      visionModel: "gemini:gemini-2.0-flash",
+      autoApprove: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockUpdateSession.mockResolvedValueOnce(updatedSession);
+
+    await handler(
+      { id: SESSION_ID, visionModel: "gemini:gemini-2.0-flash" },
+      ctx,
+    );
+
+    // Sender should receive session_updated via ctx.push
+    expect(ctx.push).toHaveBeenCalledWith(
+      "__sessions__",
+      { type: "session_updated", data: updatedSession },
+    );
+    // Other clients via broadcastGlobal
+    expect(ctx.broadcastGlobal).toHaveBeenCalledWith(
+      "__sessions__",
+      { type: "session_updated", data: updatedSession },
+    );
+  });
+
+  it("clears visionModel via sessions.update", async () => {
+    const handler = capturedHandlers.get("sessions.update")!;
+    const ctx = makeCtx();
+
+    const updatedSession = {
+      id: SESSION_ID,
+      title: "Test",
+      model: `${PROVIDER}:${MODEL}`,
+      visionModel: "",
+      autoApprove: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockUpdateSession.mockResolvedValueOnce(updatedSession);
+
+    await handler(
+      { id: SESSION_ID, visionModel: "" },
+      ctx,
+    );
+
+    expect(mockUpdateSession).toHaveBeenCalledWith(SESSION_ID, {
+      title: undefined,
+      autoApprove: undefined,
+      visionModel: "",
+    });
+    expect(ctx.push).toHaveBeenCalledWith(
+      "__sessions__",
+      { type: "session_updated", data: updatedSession },
     );
   });
 });

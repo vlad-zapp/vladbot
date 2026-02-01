@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import sharp from "sharp";
 import { getSessionFilePath } from "../sessionFiles.js";
+import { getSessionVisionModel } from "../sessionStore.js";
 import { env } from "../../config/env.js";
 import { getRuntimeSetting } from "../../config/runtimeSettings.js";
 
@@ -103,11 +104,18 @@ export async function resolveImageToBase64(
 
 /**
  * Parse the vision model setting ("provider:model_id") into its parts.
- * Reads from runtime settings (DB override, then env fallback).
- * Returns null if not configured.
+ * If sessionId is provided, reads from the session first, then falls back to
+ * global runtime settings. Returns null if not configured.
  */
-async function parseVisionModel(): Promise<{ provider: string; model: string } | null> {
-  const raw = await getRuntimeSetting("vision_model");
+async function parseVisionModel(sessionId?: string): Promise<{ provider: string; model: string } | null> {
+  let raw: string | undefined;
+  if (sessionId) {
+    const sessionVision = await getSessionVisionModel(sessionId);
+    if (sessionVision) raw = sessionVision;
+  }
+  if (!raw) {
+    raw = await getRuntimeSetting("vision_model");
+  }
   if (!raw) return null;
   const idx = raw.indexOf(":");
   if (idx <= 0) return null;
@@ -126,9 +134,9 @@ function parseVisionModelSync(): { provider: string; model: string } | null {
   return { provider: raw.slice(0, idx), model: raw.slice(idx + 1) };
 }
 
-/** Returns true if a dedicated vision model is configured (async, uses runtime settings). */
-export async function hasVisionModelAsync(): Promise<boolean> {
-  return (await parseVisionModel()) !== null;
+/** Returns true if a dedicated vision model is configured (async, checks session then global). */
+export async function hasVisionModelAsync(sessionId?: string): Promise<boolean> {
+  return (await parseVisionModel(sessionId)) !== null;
 }
 
 /** Synchronous check for startup-time use (env var only). */
@@ -171,8 +179,9 @@ export async function queryVisionModel(
   prompt: string,
   imageBase64: string,
   mimeType: string = "image/jpeg",
+  sessionId?: string,
 ): Promise<string> {
-  const vm = await parseVisionModel();
+  const vm = await parseVisionModel(sessionId);
   if (!vm) {
     return "[Error: no VISION_MODEL configured]";
   }

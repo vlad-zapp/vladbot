@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { env } from "../../../../config/env.js";
 import { getRuntimeSetting } from "../../../../config/runtimeSettings.js";
+import { getSessionVisionModel } from "../../../sessionStore.js";
 import { resolveConnection } from "../VncConnection.js";
 import { saveSessionFile } from "../../../sessionFiles.js";
 import type { CoordinateResult } from "../types.js";
@@ -33,7 +34,7 @@ export async function getCoordinates(
       await findWithShowUI(args, description));
   } else {
     ({ x, y, imgBuffer, imgWidth, imgHeight } =
-      await findWithVisionModel(args, description));
+      await findWithVisionModel(args, description, sessionId));
   }
 
   const result: CoordinateResult = {
@@ -266,8 +267,15 @@ function parseShowUIResponse(data: unknown[]): [number, number] {
 async function findWithVisionModel(
   args: Record<string, unknown>,
   description: string,
+  sessionId?: string,
 ): Promise<{ x: number; y: number; imgBuffer: Buffer; imgWidth: number; imgHeight: number }> {
-  const visionRaw = await getRuntimeSetting("vision_model");
+  let visionRaw: string | undefined;
+  if (sessionId) {
+    visionRaw = await getSessionVisionModel(sessionId) || undefined;
+  }
+  if (!visionRaw) {
+    visionRaw = await getRuntimeSetting("vision_model");
+  }
   if (!visionRaw) {
     throw new Error(
       "Vision model not configured. Set a vision model in Settings to use coordinate detection.",

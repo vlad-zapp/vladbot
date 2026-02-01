@@ -28,7 +28,7 @@ const mockSessionStore = {
   createSession: vi.fn(),
   listSessions: vi.fn(),
   getSession: vi.fn(),
-  getSessionModelInfo: vi.fn().mockResolvedValue({ model: "deepseek-chat", provider: "deepseek" }),
+  getSessionModel: vi.fn().mockResolvedValue("deepseek:deepseek-chat"),
   getMessages: vi.fn(),
   updateSessionTitle: vi.fn(),
   updateSession: vi.fn(),
@@ -326,6 +326,48 @@ describe("Session routes", () => {
       expect(res.status).toBe(400);
     });
 
+    it("updates visionModel", async () => {
+      mockSessionStore.updateSession.mockResolvedValueOnce({
+        id: "s1",
+        title: "Chat",
+        autoApprove: false,
+        model: "deepseek:deepseek-chat",
+        visionModel: "gemini:gemini-2.0-flash",
+        createdAt: "2025-01-01",
+        updatedAt: "2025-01-02",
+      });
+
+      const res = await fetch(`${base}/sessions/s1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visionModel: "gemini:gemini-2.0-flash" }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.visionModel).toBe("gemini:gemini-2.0-flash");
+    });
+
+    it("clears visionModel with empty string", async () => {
+      mockSessionStore.updateSession.mockResolvedValueOnce({
+        id: "s1",
+        title: "Chat",
+        autoApprove: false,
+        model: "deepseek:deepseek-chat",
+        visionModel: "",
+        createdAt: "2025-01-01",
+        updatedAt: "2025-01-02",
+      });
+
+      const res = await fetch(`${base}/sessions/s1`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visionModel: "" }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body.visionModel).toBe("");
+    });
+
     it("returns 400 when no fields provided", async () => {
       const res = await fetch(`${base}/sessions/s1`, {
         method: "PATCH",
@@ -470,7 +512,7 @@ describe("Session routes", () => {
     });
 
     it("returns 404 when session model info not found", async () => {
-      mockSessionStore.getSessionModelInfo.mockResolvedValueOnce(null);
+      mockSessionStore.getSessionModel.mockResolvedValueOnce(null);
 
       const res = await fetch(`${base}/sessions/s1/compact`, {
         method: "POST",
@@ -598,7 +640,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 404 for missing session", async () => {
-      mockSessionStore.getSessionModelInfo.mockResolvedValueOnce(null);
+      mockSessionStore.getSessionModel.mockResolvedValueOnce(null);
 
       const res = await fetch(`${base}/sessions/nonexistent/messages/m1/approve`, {
         method: "POST",

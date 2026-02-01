@@ -126,8 +126,10 @@ export interface Session {
   id: string;
   title: string;
   autoApprove: boolean;
+  /** Stored as "provider:modelId" (e.g. "deepseek:deepseek-chat"). */
   model: string;
-  provider: string;
+  /** Stored as "provider:modelId" (e.g. "gemini:gemini-2.0-flash"). Empty string if not set. */
+  visionModel: string;
   createdAt: string;
   updatedAt: string;
 }

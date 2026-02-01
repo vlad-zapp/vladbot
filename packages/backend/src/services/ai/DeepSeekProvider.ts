@@ -42,9 +42,9 @@ export class DeepSeekProvider implements AIProviderInterface {
     };
   }
 
-  private async convertMessages(messages: MessagePart[]): Promise<OpenAIMessage[]> {
+  private async convertMessages(messages: MessagePart[], sessionId?: string): Promise<OpenAIMessage[]> {
     const result: OpenAIMessage[] = [];
-    const visionAvailable = await hasVisionModelAsync();
+    const visionAvailable = await hasVisionModelAsync(sessionId);
     const systemPrompt = await getSystemPrompt();
 
     if (!visionAvailable) {
@@ -147,8 +147,9 @@ export class DeepSeekProvider implements AIProviderInterface {
     messages: MessagePart[],
     model: string,
     tools?: ToolDefinition[],
+    sessionId?: string,
   ): Promise<{ text: string; toolCalls: ToolCall[]; usage?: { inputTokens: number; outputTokens: number } }> {
-    const converted = await this.convertMessages(messages);
+    const converted = await this.convertMessages(messages, sessionId);
     const body: Record<string, unknown> = {
       model,
       messages: converted,
@@ -202,8 +203,9 @@ export class DeepSeekProvider implements AIProviderInterface {
     model: string,
     tools?: ToolDefinition[],
     signal?: AbortSignal,
+    sessionId?: string,
   ): AsyncIterable<StreamChunk> {
-    const converted = await this.convertMessages(messages);
+    const converted = await this.convertMessages(messages, sessionId);
     const body: Record<string, unknown> = {
       model,
       messages: converted,

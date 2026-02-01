@@ -1,5 +1,6 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { ModelInfo } from "@vladbot/shared";
+import { findModel } from "@vladbot/shared";
 import Header from "./components/Layout/Header.js";
 import type { View } from "./components/Layout/Header.js";
 import Sidebar from "./components/Sidebar/Sidebar.js";
@@ -13,6 +14,7 @@ import { useChat } from "./hooks/useChat.js";
 import { useTools } from "./hooks/useTools.js";
 import { useSessions } from "./hooks/useSessions.js";
 import { useSettings } from "./hooks/useSettings.js";
+import { updateSessionVisionModelApi } from "./services/api.js";
 import type { DebugEntry } from "./services/api.js";
 
 export default function App() {
@@ -31,38 +33,20 @@ export default function App() {
     setSessionAutoApprove,
   } = useSessions();
 
-  // Derive selectedModel from the active session's stored model
+  // Derive selectedModel from the active session's stored model ("provider:modelId" format)
   const selectedModel = useMemo(() => {
     if (!activeSession?.model) return models[0] ?? null;
-    return models.find((m) => m.id === activeSession.model) ?? models[0] ?? null;
+    return findModel(activeSession.model) ?? models[0] ?? null;
   }, [activeSession?.model, models]);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [currentView, setCurrentView] = useState<View>("chat");
-  const [visionModel, setVisionModel] = useState(settings?.vision_model ?? "");
 
-  useEffect(() => {
-    if (settings?.vision_model != null) setVisionModel(settings.vision_model);
-  }, [settings?.vision_model]);
+  // Vision model is per-session, derived from the active session
+  const visionModel = activeSession?.visionModel ?? "";
 
   const visionOverrideWarning =
     !!selectedModel?.nativeVision && !!visionModel;
-
-  // Auto-reset vision model when the user switches to a model with native vision.
-  // Only fires on actual model-to-model switches (not on initial load).
-  const prevModelIdRef = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const id = selectedModel?.id;
-    const prev = prevModelIdRef.current;
-    prevModelIdRef.current = id;
-    // Only act when switching from one model to another, not on first load
-    if (!prev || !id || prev === id) return;
-    if (selectedModel?.nativeVision && visionModel) {
-      setVisionModel("");
-      saveSettings({ vision_model: "" }).catch(console.error);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModel?.id]);
 
   const handleAutoApproveChange = useCallback(
     (value: boolean) => {
@@ -74,14 +58,14 @@ export default function App() {
 
   const handleVisionModelChange = useCallback(
     async (value: string) => {
-      setVisionModel(value);
+      if (!activeSessionId) return;
       try {
-        await saveSettings({ vision_model: value });
+        await updateSessionVisionModelApi(activeSessionId, value);
       } catch (err) {
         console.error("Failed to save vision model:", err);
       }
     },
-    [saveSettings],
+    [activeSessionId],
   );
 
   const handleNewChat = useCallback(async () => {
@@ -126,10 +110,8 @@ export default function App() {
     async (newModel: ModelInfo) => {
       if (!activeSessionId) return;
       await switchModel(newModel.id);
-      // Persist so new sessions use this model
-      saveSettings({ default_model: newModel.id }).catch(console.error);
     },
-    [activeSessionId, switchModel, saveSettings],
+    [activeSessionId, switchModel],
   );
 
   const debugByMessage = useMemo(() => {
