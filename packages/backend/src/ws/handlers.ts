@@ -429,6 +429,12 @@ registerHandler("messages.approve", async (payload, ctx) => {
   const updated = await atomicApprove(messageId);
   if (!updated) throw new WsError(409, "Message was already approved by a concurrent request");
 
+  // Notify all other watchers that this message was approved
+  ctx.broadcastToSession(sessionId, {
+    type: "approval_changed",
+    data: { messageId, approvalStatus: "approved" },
+  });
+
   // Create a fresh stream and register this WS as subscriber
   const stream = createStream(sessionId, messageId, model);
   const subscriber = (event: SSEEvent) => {
@@ -552,6 +558,10 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
   const newModelInfo = findModel(newModel);
   if (!newModelInfo) throw new WsError(400, "Unknown model");
 
+  // Resolve the current (old) model before switching — used for summarization
+  // if compaction is needed (the old model has a larger context window).
+  const oldModelInfo = await resolveSessionModel(sessionId);
+
   // Persist model on the session.
   // If the new model has native vision, auto-clear the session's vision override.
   const sessionUpdates: { model: string; visionModel?: string } = {
@@ -585,10 +595,13 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
   ctx.broadcastToSession(sessionId, startEvent);
 
   try {
+    // Use the OLD model for summarization (it has a larger context window and
+    // can handle the full conversation), but the NEW model's context window
+    // for the verbatim tail budget (that's the target context we're compacting for).
     const result = await compactSession(
       sessionId,
-      newModelInfo.id,
-      newModelInfo.provider,
+      oldModelInfo.id,
+      oldModelInfo.provider,
       newModelInfo.contextWindow,
     );
     const doneEvent = { type: "compaction" as const, data: result.compactionMessage };

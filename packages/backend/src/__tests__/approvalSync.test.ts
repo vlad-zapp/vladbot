@@ -236,6 +236,34 @@ describe("messages.approve — cross-client sync", () => {
     expect(fakeStream.subscribers.size).toBeGreaterThanOrEqual(2);
   });
 
+  it("broadcasts approval_changed to other watchers immediately", async () => {
+    const handler = capturedHandlers.get("messages.approve")!;
+    const ctx = makeCtx();
+
+    mockGetSessionWatchers.mockReturnValue([]);
+    mockGetSession.mockResolvedValueOnce(baseSession());
+    mockAtomicApprove.mockResolvedValueOnce(true);
+
+    const fakeStream = {
+      subscribers: new Set<(event: SSEEvent) => void>(),
+      content: "",
+      model: MODEL,
+      toolCalls: [],
+    };
+    mockCreateStream.mockReturnValueOnce(fakeStream);
+
+    await handler(
+      { sessionId: SESSION_ID, messageId: MESSAGE_ID },
+      ctx,
+    );
+
+    // Other watchers should receive approval_changed so their buttons disappear
+    expect(ctx.broadcastToSession).toHaveBeenCalledWith(SESSION_ID, {
+      type: "approval_changed",
+      data: { messageId: MESSAGE_ID, approvalStatus: "approved" },
+    });
+  });
+
   it("does not subscribe the approving client twice via watchers loop", async () => {
     const handler = capturedHandlers.get("messages.approve")!;
 
@@ -437,6 +465,93 @@ describe("sessions.switchModel — cross-client sync", () => {
       SESSION_ID,
       { type: "compaction", data: compactionMsg },
     );
+  });
+
+  it("uses old model for summarization and new model's context window for verbatim budget", async () => {
+    const handler = capturedHandlers.get("sessions.switchModel")!;
+    const ctx = makeCtx();
+
+    // Old model: claude-sonnet-4 (200k context)
+    mockGetSessionModelInfo.mockResolvedValueOnce(`anthropic:${MODEL}`);
+    // New model: deepseek-chat (65k context)
+    const newModel = "deepseek-chat";
+
+    const newUpdatedSession = {
+      id: SESSION_ID,
+      title: "Test",
+      model: `deepseek:${newModel}`,
+      visionModel: "",
+      autoApprove: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mockUpdateSession.mockResolvedValueOnce(newUpdatedSession);
+
+    // Token usage exceeds 80% of new model's 65k window
+    mockGetSession.mockResolvedValueOnce({
+      ...newUpdatedSession,
+      messages: [],
+      tokenUsage: { inputTokens: 60_000, outputTokens: 1000 },
+    });
+
+    const compactionMsg = {
+      id: "cmp-1",
+      role: "compaction",
+      content: "Summary",
+      timestamp: Date.now(),
+    };
+    mockCompactSession.mockResolvedValueOnce({
+      compactionMessage: compactionMsg,
+      summary: "Summary",
+    });
+
+    await handler(
+      { sessionId: SESSION_ID, newModel },
+      ctx,
+    );
+
+    // compactSession should use OLD model for summarization (anthropic:claude-sonnet-4)
+    // but NEW model's context window (65_536) for verbatim budget
+    expect(mockCompactSession).toHaveBeenCalledWith(
+      SESSION_ID,
+      MODEL,          // old model id
+      "anthropic",    // old provider
+      65_536,         // new model's context window
+    );
+  });
+
+  it("does not trigger compaction when context is below 80% of new model's window", async () => {
+    const handler = capturedHandlers.get("sessions.switchModel")!;
+    const ctx = makeCtx();
+
+    // Old model: claude-sonnet-4 (200k)
+    mockGetSessionModelInfo.mockResolvedValueOnce(`anthropic:${MODEL}`);
+
+    const newUpdatedSession = {
+      id: SESSION_ID,
+      title: "Test",
+      model: "deepseek:deepseek-chat",
+      visionModel: "",
+      autoApprove: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mockUpdateSession.mockResolvedValueOnce(newUpdatedSession);
+
+    // Token usage below 80% of new model's 65k window (80% = 52_429)
+    mockGetSession.mockResolvedValueOnce({
+      ...newUpdatedSession,
+      messages: [],
+      tokenUsage: { inputTokens: 40_000, outputTokens: 500 },
+    });
+
+    const result = await handler(
+      { sessionId: SESSION_ID, newModel: "deepseek-chat" },
+      ctx,
+    );
+
+    expect(mockCompactSession).not.toHaveBeenCalled();
+    expect(result).toEqual({ compacted: false });
   });
 });
 
