@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import type { ModelInfo } from "@vladbot/shared";
 import Header from "./components/Layout/Header.js";
 import type { View } from "./components/Layout/Header.js";
@@ -47,6 +47,22 @@ export default function App() {
 
   const visionOverrideWarning =
     !!selectedModel?.nativeVision && !!visionModel;
+
+  // Auto-reset vision model when the user switches to a model with native vision.
+  // Only fires on actual model-to-model switches (not on initial load).
+  const prevModelIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const id = selectedModel?.id;
+    const prev = prevModelIdRef.current;
+    prevModelIdRef.current = id;
+    // Only act when switching from one model to another, not on first load
+    if (!prev || !id || prev === id) return;
+    if (selectedModel?.nativeVision && visionModel) {
+      setVisionModel("");
+      saveSettings({ vision_model: "" }).catch(console.error);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModel?.id]);
 
   const handleAutoApproveChange = useCallback(
     (value: boolean) => {

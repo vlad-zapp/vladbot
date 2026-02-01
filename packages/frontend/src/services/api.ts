@@ -284,11 +284,8 @@ export async function subscribeToStream(
 
 export async function compactSessionApi(
   sessionId: string,
-): Promise<{ compactionMessage: ChatMessage; summary: string }> {
-  return wsClient.request<{ compactionMessage: ChatMessage; summary: string }>(
-    "sessions.compact",
-    { sessionId },
-  );
+): Promise<void> {
+  await wsClient.request("sessions.compact", { sessionId });
 }
 
 // Model switch compaction
@@ -296,11 +293,8 @@ export async function compactSessionApi(
 export async function switchModelApi(
   sessionId: string,
   newModel: string,
-): Promise<{ compacted: boolean; compactionMessage?: ChatMessage }> {
-  return wsClient.request<{ compacted: boolean; compactionMessage?: ChatMessage }>(
-    "sessions.switchModel",
-    { sessionId, newModel },
-  );
+): Promise<void> {
+  await wsClient.request("sessions.switchModel", { sessionId, newModel });
 }
 
 // Memory CRUD

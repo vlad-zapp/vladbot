@@ -87,7 +87,9 @@ export type SSEEvent =
   | { type: "usage"; data: { inputTokens: number; outputTokens: number } }
   | { type: "snapshot"; data: { assistantId: string; content: string; model: string; toolCalls: ToolCall[] } }
   | { type: "auto_approved"; data: { messageId: string } }
+  | { type: "compaction_started"; data: { sessionId: string } }
   | { type: "compaction"; data: ChatMessage }
+  | { type: "compaction_error"; data: { sessionId: string; error: string } }
   | { type: "new_message"; data: ChatMessage }
   | { type: "settings_changed"; data: AppSettings }
   | { type: "session_created"; data: Session }

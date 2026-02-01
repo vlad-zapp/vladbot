@@ -494,20 +494,43 @@ registerHandler("messages.deny", async (payload, ctx) => {
 // Compaction
 // ---------------------------------------------------------------------------
 
-registerHandler("sessions.compact", async (payload) => {
+registerHandler("sessions.compact", async (payload, ctx) => {
   const schema = z.object({
     sessionId: z.string().min(1),
   });
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
 
-  const modelInfo = await resolveSessionModel(parsed.data.sessionId);
-  return await compactSession(
-    parsed.data.sessionId,
-    modelInfo.id,
-    modelInfo.provider,
-    modelInfo.contextWindow,
-  );
+  const { sessionId } = parsed.data;
+  const modelInfo = await resolveSessionModel(sessionId);
+
+  // Notify ALL clients: compaction started
+  const startEvent = { type: "compaction_started" as const, data: { sessionId } };
+  ctx.push(sessionId, startEvent);
+  ctx.broadcastToSession(sessionId, startEvent);
+
+  // Run compaction in background, return ACK immediately
+  (async () => {
+    try {
+      const result = await compactSession(
+        sessionId,
+        modelInfo.id,
+        modelInfo.provider,
+        modelInfo.contextWindow,
+      );
+      const doneEvent = { type: "compaction" as const, data: result.compactionMessage };
+      ctx.push(sessionId, doneEvent);
+      ctx.broadcastToSession(sessionId, doneEvent);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Compaction failed";
+      console.error("Manual compaction failed:", err);
+      const errorEvent = { type: "compaction_error" as const, data: { sessionId, error: message } };
+      ctx.push(sessionId, errorEvent);
+      ctx.broadcastToSession(sessionId, errorEvent);
+    }
+  })().catch(console.error);
+
+  return {};
 });
 
 registerHandler("sessions.switchModel", async (payload, ctx) => {
@@ -529,8 +552,10 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
   });
   if (!updatedSession) throw new WsError(404, "Session not found");
 
-  // Broadcast so all clients see the new model
-  ctx.broadcastGlobal("__sessions__", { type: "session_updated", data: updatedSession });
+  // Broadcast so ALL clients see the new model (including sender)
+  const sessionEvent = { type: "session_updated" as const, data: updatedSession };
+  ctx.push("__sessions__", sessionEvent);
+  ctx.broadcastGlobal("__sessions__", sessionEvent);
 
   // Check if context exceeds 80% of new model's window → auto-compact
   const session = await getSession(sessionId);
@@ -543,6 +568,11 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
     return { compacted: false };
   }
 
+  // Notify ALL clients: compaction started
+  const startEvent = { type: "compaction_started" as const, data: { sessionId } };
+  ctx.push(sessionId, startEvent);
+  ctx.broadcastToSession(sessionId, startEvent);
+
   try {
     const result = await compactSession(
       sessionId,
@@ -550,9 +580,16 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
       newModelInfo.provider,
       newModelInfo.contextWindow,
     );
+    const doneEvent = { type: "compaction" as const, data: result.compactionMessage };
+    ctx.push(sessionId, doneEvent);
+    ctx.broadcastToSession(sessionId, doneEvent);
     return { compacted: true, compactionMessage: result.compactionMessage };
   } catch (err) {
     console.error("Model-switch compaction failed:", err);
+    const message = err instanceof Error ? err.message : "Compaction failed";
+    const errorEvent = { type: "compaction_error" as const, data: { sessionId, error: message } };
+    ctx.push(sessionId, errorEvent);
+    ctx.broadcastToSession(sessionId, errorEvent);
     return { compacted: false };
   }
 });

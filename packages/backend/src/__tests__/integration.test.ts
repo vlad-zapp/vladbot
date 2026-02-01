@@ -1,7 +1,16 @@
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, afterAll } from "vitest";
 import type { ToolCall } from "@vladbot/shared";
 
 const BASE = "http://localhost:3001/api";
+
+// Track sessions created during tests for cleanup
+const createdSessionIds: string[] = [];
+
+afterAll(async () => {
+  for (const id of createdSessionIds) {
+    await fetch(`${BASE}/sessions/${id}`, { method: "DELETE" }).catch(() => {});
+  }
+});
 
 // These tests require the dev server running and a valid DEEPSEEK_API_KEY.
 // Run with: npm test -w @vladbot/backend
@@ -138,6 +147,7 @@ describe("Integration: DeepSeek tool call via /api/chat/stream", () => {
       expect(createRes.ok).toBe(true);
       const session = await createRes.json();
       const sessionId = session.id;
+      createdSessionIds.push(sessionId);
 
       // Add a user message
       const msgRes = await fetch(`${BASE}/sessions/${sessionId}/messages`, {

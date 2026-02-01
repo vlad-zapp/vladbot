@@ -11,12 +11,14 @@ const {
   mockAtomicApprove,
   mockAddMessage,
   mockUpdateMessage,
+  mockUpdateSession,
   mockDenyToolRound,
   mockExecuteToolRound,
   mockCreateStream,
   mockGetStream,
   mockPushEvent,
   mockGetSessionWatchers,
+  mockCompactSession,
   capturedHandlers,
 } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
@@ -24,12 +26,14 @@ const {
   mockAtomicApprove: vi.fn(),
   mockAddMessage: vi.fn().mockResolvedValue("new-msg-id"),
   mockUpdateMessage: vi.fn().mockResolvedValue(undefined),
+  mockUpdateSession: vi.fn(),
   mockDenyToolRound: vi.fn().mockResolvedValue(undefined),
   mockExecuteToolRound: vi.fn().mockResolvedValue(undefined),
   mockCreateStream: vi.fn(),
   mockGetStream: vi.fn(),
   mockPushEvent: vi.fn(),
   mockGetSessionWatchers: vi.fn().mockReturnValue([]),
+  mockCompactSession: vi.fn(),
   capturedHandlers: new Map<string, (payload: unknown, ctx: unknown) => Promise<unknown>>(),
 }));
 
@@ -50,7 +54,7 @@ vi.mock("../services/sessionStore.js", () => ({
   getSessionModelInfo: (...args: unknown[]) => mockGetSessionModelInfo(...args),
   getMessages: vi.fn(),
   updateSessionTitle: vi.fn(),
-  updateSession: vi.fn(),
+  updateSession: (...args: unknown[]) => mockUpdateSession(...args),
   deleteSession: vi.fn(),
   addMessage: (...args: unknown[]) => mockAddMessage(...args),
   updateMessage: (...args: unknown[]) => mockUpdateMessage(...args),
@@ -111,7 +115,7 @@ vi.mock("../services/sessionFiles.js", () => ({
 }));
 
 vi.mock("../services/compaction.js", () => ({
-  compactSession: vi.fn(),
+  compactSession: (...args: unknown[]) => mockCompactSession(...args),
 }));
 
 vi.mock("../services/memoryStore.js", () => ({
@@ -342,5 +346,215 @@ describe("messages.deny — cross-client sync", () => {
         ctx,
       ),
     ).rejects.toThrow("Message approval status is 'approved', expected 'pending'");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sessions.switchModel — cross-client sync
+// ---------------------------------------------------------------------------
+
+describe("sessions.switchModel — cross-client sync", () => {
+  const updatedSession = {
+    id: SESSION_ID,
+    title: "Test",
+    model: MODEL,
+    provider: PROVIDER,
+    autoApprove: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  it("pushes session_updated to the sender (not just broadcastGlobal)", async () => {
+    const handler = capturedHandlers.get("sessions.switchModel")!;
+    expect(handler).toBeDefined();
+
+    const ctx = makeCtx();
+    mockUpdateSession.mockResolvedValueOnce(updatedSession);
+    // No token usage → no compaction
+    mockGetSession.mockResolvedValueOnce({ ...updatedSession, messages: [] });
+
+    await handler(
+      { sessionId: SESSION_ID, newModel: MODEL },
+      ctx,
+    );
+
+    // Sender should receive session_updated via ctx.push
+    expect(ctx.push).toHaveBeenCalledWith(
+      "__sessions__",
+      { type: "session_updated", data: updatedSession },
+    );
+    // Other clients via broadcastGlobal
+    expect(ctx.broadcastGlobal).toHaveBeenCalledWith(
+      "__sessions__",
+      { type: "session_updated", data: updatedSession },
+    );
+  });
+
+  it("broadcasts compaction lifecycle events when model switch triggers compaction", async () => {
+    const handler = capturedHandlers.get("sessions.switchModel")!;
+    const ctx = makeCtx();
+
+    mockUpdateSession.mockResolvedValueOnce(updatedSession);
+    // High token usage → triggers compaction (>80% of context)
+    mockGetSession.mockResolvedValueOnce({
+      ...updatedSession,
+      messages: [],
+      tokenUsage: { inputTokens: 180000, outputTokens: 1000 },
+    });
+
+    const compactionMsg = {
+      id: "cmp-1",
+      role: "compaction",
+      content: "Summary",
+      timestamp: Date.now(),
+    };
+    mockCompactSession.mockResolvedValueOnce({
+      compactionMessage: compactionMsg,
+      summary: "Summary",
+    });
+
+    await handler(
+      { sessionId: SESSION_ID, newModel: MODEL },
+      ctx,
+    );
+
+    // Should broadcast compaction_started to sender and session
+    expect(ctx.push).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction_started", data: { sessionId: SESSION_ID } },
+    );
+    expect(ctx.broadcastToSession).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction_started", data: { sessionId: SESSION_ID } },
+    );
+
+    // Should broadcast compaction message to sender and session
+    expect(ctx.push).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction", data: compactionMsg },
+    );
+    expect(ctx.broadcastToSession).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction", data: compactionMsg },
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sessions.compact — cross-client sync
+// ---------------------------------------------------------------------------
+
+describe("sessions.compact — cross-client sync", () => {
+  it("pushes compaction_started and compaction to sender and session watchers", async () => {
+    const handler = capturedHandlers.get("sessions.compact")!;
+    expect(handler).toBeDefined();
+
+    const ctx = makeCtx();
+    const compactionMsg = {
+      id: "cmp-2",
+      role: "compaction",
+      content: "Compacted summary",
+      timestamp: Date.now(),
+    };
+    mockCompactSession.mockResolvedValueOnce({
+      compactionMessage: compactionMsg,
+      summary: "Compacted summary",
+    });
+
+    await handler({ sessionId: SESSION_ID }, ctx);
+
+    // Should push compaction_started to sender
+    expect(ctx.push).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction_started", data: { sessionId: SESSION_ID } },
+    );
+    // Should broadcast compaction_started to other watchers
+    expect(ctx.broadcastToSession).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction_started", data: { sessionId: SESSION_ID } },
+    );
+
+    // Wait for the background compaction to complete
+    await vi.waitFor(() => {
+      // Should push compaction to sender
+      expect(ctx.push).toHaveBeenCalledWith(
+        SESSION_ID,
+        { type: "compaction", data: compactionMsg },
+      );
+    });
+
+    // Should broadcast compaction to other watchers
+    expect(ctx.broadcastToSession).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction", data: compactionMsg },
+    );
+  });
+
+  it("pushes compaction_error on failure", async () => {
+    const handler = capturedHandlers.get("sessions.compact")!;
+    const ctx = makeCtx();
+
+    mockCompactSession.mockRejectedValueOnce(new Error("Not enough messages to compact"));
+
+    await handler({ sessionId: SESSION_ID }, ctx);
+
+    // Wait for the background compaction to fail
+    await vi.waitFor(() => {
+      expect(ctx.push).toHaveBeenCalledWith(
+        SESSION_ID,
+        {
+          type: "compaction_error",
+          data: { sessionId: SESSION_ID, error: "Not enough messages to compact" },
+        },
+      );
+    });
+
+    expect(ctx.broadcastToSession).toHaveBeenCalledWith(
+      SESSION_ID,
+      {
+        type: "compaction_error",
+        data: { sessionId: SESSION_ID, error: "Not enough messages to compact" },
+      },
+    );
+  });
+
+  it("returns immediately (ACK) before compaction completes", async () => {
+    const handler = capturedHandlers.get("sessions.compact")!;
+    const ctx = makeCtx();
+
+    // Make compaction hang
+    let resolveCompaction!: (v: unknown) => void;
+    mockCompactSession.mockReturnValueOnce(
+      new Promise((resolve) => { resolveCompaction = resolve; }),
+    );
+
+    const result = await handler({ sessionId: SESSION_ID }, ctx);
+
+    // Handler returns immediately
+    expect(result).toEqual({});
+
+    // compaction_started was pushed, but compaction hasn't finished
+    expect(ctx.push).toHaveBeenCalledWith(
+      SESSION_ID,
+      { type: "compaction_started", data: { sessionId: SESSION_ID } },
+    );
+    // No compaction event yet (still running)
+    expect(ctx.push).not.toHaveBeenCalledWith(
+      SESSION_ID,
+      expect.objectContaining({ type: "compaction" }),
+    );
+
+    // Resolve compaction
+    resolveCompaction({
+      compactionMessage: { id: "cmp-3", role: "compaction", content: "Done", timestamp: Date.now() },
+      summary: "Done",
+    });
+
+    await vi.waitFor(() => {
+      expect(ctx.push).toHaveBeenCalledWith(
+        SESSION_ID,
+        expect.objectContaining({ type: "compaction" }),
+      );
+    });
   });
 });

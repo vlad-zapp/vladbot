@@ -442,8 +442,18 @@ export function useChat(
           setTokenUsage(event.data);
           tokenUsageCacheRef.current.set(sid, event.data);
           break;
+        case "compaction_started":
+          setIsCompacting(true);
+          setCompactionError(null);
+          break;
         case "compaction":
           setMessages((prev) => [...prev, event.data]);
+          setIsCompacting(false);
+          break;
+        case "compaction_error":
+          setCompactionError(event.data.error);
+          setTimeout(() => setCompactionError(null), 5000);
+          setIsCompacting(false);
           break;
         case "approval_changed":
           setMessages((prev) =>
@@ -819,20 +829,12 @@ export function useChat(
       const sessionId = activeSessionId ?? sessionIdRef.current;
       if (!sessionId || streamStateRef.current || isCompactingRef.current) return;
 
-      setCompactionError(null);
       try {
-        setIsCompacting(true);
-        const result = await compactSessionApi(sessionId);
-        if (result.summary) {
-          setMessages((prev) => [...prev, result.compactionMessage]);
-        }
+        // Server pushes compaction_started/compaction/compaction_error to all clients
+        await compactSessionApi(sessionId);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Compaction failed";
-        console.error("Manual compaction failed:", err);
-        setCompactionError(msg);
-        setTimeout(() => setCompactionError(null), 5000);
-      } finally {
-        setIsCompacting(false);
+        // RPC-level error (network, validation) — push events handle compaction lifecycle
+        console.error("Manual compaction request failed:", err);
       }
     },
     [activeSessionId],
@@ -844,13 +846,10 @@ export function useChat(
       if (!sessionId) return;
 
       try {
-        const result = await switchModelApi(sessionId, newModelId);
-        if (result.compacted && result.compactionMessage) {
-          const msg = result.compactionMessage;
-          setMessages((prev) => [...prev, msg]);
-        }
+        // Server pushes session_updated + compaction lifecycle events to all clients
+        await switchModelApi(sessionId, newModelId);
       } catch (err) {
-        console.error("Model switch compaction failed:", err);
+        console.error("Model switch failed:", err);
       }
     },
     [activeSessionId],
