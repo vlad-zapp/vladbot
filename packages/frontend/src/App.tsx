@@ -101,7 +101,6 @@ export default function App() {
   } = useChat(
     activeSessionId,
     createNewSession,
-    updateLocalSessionTitle,
     activeSession?.autoApprove ?? false,
     handleAutoApproveChange,
   );

@@ -256,6 +256,13 @@ export function getSessionWatchers(sessionId: string): ConnectionEntry[] {
   return watchers;
 }
 
+/** Broadcast a push event to ALL connected clients (server-initiated, no sender exclusion). */
+export function broadcastToAllClients(sessionId: string, event: SSEEvent): void {
+  for (const c of connections) {
+    c.push(sessionId, event);
+  }
+}
+
 /** Cleanup all connections (for graceful shutdown / tests). */
 export function closeAllConnections(): void {
   for (const { ws, pingTimer } of connections) {

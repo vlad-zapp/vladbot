@@ -105,7 +105,6 @@ const DEFAULT_PAGE_SIZE = 30;
 export function useChat(
   activeSessionId: string | null,
   onEnsureSession: (title?: string) => Promise<string>,
-  onUpdateSessionTitle: (id: string, title: string) => void,
   initialAutoApprove?: boolean,
   onAutoApproveChange?: (value: boolean) => void,
 ) {
@@ -726,17 +725,10 @@ export function useChat(
       // Ensure we have a session
       let sessionId = activeSessionId;
       if (!sessionId) {
-        const title = content.slice(0, 50);
         skipLoadRef.current = true;
-        sessionId = await onEnsureSession(title);
+        sessionId = await onEnsureSession();
       }
       sessionIdRef.current = sessionId;
-
-      // Auto-title on first message
-      if (messages.length === 0) {
-        const title = content.slice(0, 50);
-        onUpdateSessionTitle(sessionId, title);
-      }
 
       const userMsg: ChatMessage = {
         id: "",
@@ -820,7 +812,6 @@ export function useChat(
       activeSessionId,
       streamTurn,
       onEnsureSession,
-      onUpdateSessionTitle,
     ],
   );
 

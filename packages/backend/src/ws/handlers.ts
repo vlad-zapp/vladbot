@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ChatMessage, ModelInfo, SSEEvent } from "@vladbot/shared";
 import { AVAILABLE_MODELS, findModel, formatModelField } from "@vladbot/shared";
-import { registerHandler, watchSession, unwatchSession, getSessionWatchers } from "./wsServer.js";
+import { registerHandler, watchSession, unwatchSession, getSessionWatchers, broadcastToAllClients } from "./wsServer.js";
 import { env } from "../config/env.js";
 import {
   createSession,
@@ -35,6 +35,7 @@ import { getAllRuntimeSettings } from "../config/runtimeSettings.js";
 import { getProvider } from "../services/ai/ProviderFactory.js";
 import { classifyLLMError } from "../services/ai/errorClassifier.js";
 import { autoCompactIfNeeded } from "../services/autoCompact.js";
+import { generateSessionName } from "../services/sessionNaming.js";
 import {
   chatRequestSchema,
   toolExecuteSchema,
@@ -793,6 +794,19 @@ registerHandler("chat.stream", async (payload, ctx) => {
     try {
       const session = await getSession(sessionId);
       if (!session) throw new Error("Session not found");
+
+      // Auto-name session on first user message (fire-and-forget)
+      const userMessages = session.messages.filter((m) => m.role === "user");
+      if (session.title === "New chat" && userMessages.length === 1) {
+        generateSessionName(sessionId, userMessages[0].content, providerName, model)
+          .then((updated) => {
+            if (updated) {
+              broadcastToAllClients("__sessions__", { type: "session_updated", data: updated });
+            }
+          })
+          .catch(console.error);
+      }
+
       const history = buildHistoryFromDB(session.messages);
 
       const provider = getProvider(providerName);
