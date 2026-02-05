@@ -17,6 +17,8 @@ export interface BrowserNavigateResult {
   status: number | null;
   /** Note when status looks like error but page loaded via JS */
   note?: string;
+  image_url?: string;
+  image_base64?: string;
 }
 
 export interface BrowserScreenshotResult {

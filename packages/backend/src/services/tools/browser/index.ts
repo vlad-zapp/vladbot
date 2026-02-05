@@ -201,7 +201,7 @@ Operations:
       case "disconnect":
         return disconnect();
       case "navigate":
-        return navigate(args);
+        return navigate(args, sessionId);
       case "screenshot":
         return screenshot(args, sessionId);
       case "click":

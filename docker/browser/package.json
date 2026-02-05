@@ -1,0 +1,8 @@
+{
+  "name": "vladbot-browser",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "patchright": "^1.49.0"
+  }
+}

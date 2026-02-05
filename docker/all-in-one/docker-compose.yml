@@ -1,0 +1,19 @@
+services:
+  vladbot:
+    build:
+      context: ../..
+      dockerfile: docker/all-in-one/Dockerfile
+    ports:
+      - "80:80"      # Web UI + noVNC at /vnc
+    environment:
+      # At least one API key is required
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+    volumes:
+      - vladbot-data:/data
+    shm_size: 2gb  # Required for Chrome
+    restart: unless-stopped
+
+volumes:
+  vladbot-data:

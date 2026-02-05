@@ -1,0 +1,38 @@
+# Dependencies (will be installed in container)
+node_modules
+
+# Build outputs (will be built in container)
+packages/*/dist
+
+# Development files
+*.log
+.env
+.env.*
+!.env.example
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test files
+coverage
+*.test.ts
+**/__tests__
+
+# Data directories
+data
+/data
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker build context exclusions
+docker/postgres
+docker/showui

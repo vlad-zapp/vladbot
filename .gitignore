@@ -6,3 +6,4 @@ data/
 coverage/
 TODO.md
 CLAUDE.md
+deploy.sh

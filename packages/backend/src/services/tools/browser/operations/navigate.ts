@@ -1,8 +1,9 @@
 import { getBrowserPage, clearElementMap } from "../connection.js";
+import { saveSessionFile } from "../../../sessionFiles.js";
 import type { BrowserNavigateResult } from "../types.js";
 import type { Response } from "patchright";
 
-export async function navigate(args: Record<string, unknown>): Promise<string> {
+export async function navigate(args: Record<string, unknown>, sessionId?: string): Promise<string> {
   const url = args.url as string;
   if (!url) throw new Error("Missing required argument: url");
 
@@ -45,12 +46,22 @@ export async function navigate(args: Record<string, unknown>): Promise<string> {
     // Use the last document response status (handles JS reloads), fallback to initial
     const status = lastDocumentStatus ?? response?.status() ?? null;
 
+    // Take a screenshot of the loaded page
+    const screenshotBuffer = await page.screenshot({ type: "jpeg", quality: 75 });
+
     const result: BrowserNavigateResult = {
       type: "browser_navigate",
       url: page.url(),
       title,
       status,
     };
+
+    if (sessionId) {
+      const filename = saveSessionFile(sessionId, Buffer.from(screenshotBuffer), "jpg");
+      result.image_url = `/api/sessions/${sessionId}/files/${filename}`;
+    } else {
+      result.image_base64 = `data:image/jpeg;base64,${Buffer.from(screenshotBuffer).toString("base64")}`;
+    }
 
     return JSON.stringify(result);
   } finally {

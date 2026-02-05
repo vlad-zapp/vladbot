@@ -1,0 +1,15 @@
+services:
+  browser:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3100:3100"   # Playwright WebSocket
+      - "6080:6080"   # noVNC web viewer
+    volumes:
+      - browser-data:/data
+    environment:
+      - DISPLAY=:99
+    shm_size: "2g"
+
+volumes:
+  browser-data:
