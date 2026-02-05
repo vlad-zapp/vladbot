@@ -882,3 +882,99 @@ describe("autoCompactIfNeeded", () => {
     expect(result).toBeNull();
   });
 });
+
+describe("performCompaction verbatim boundary", () => {
+  it("does not start verbatim set with a tool message", async () => {
+    // Simulate a conversation where natural token boundary falls on a tool message
+    const messages = [
+      makeMsg({ role: "user", content: "Start" }, 0),
+      makeMsg({ role: "assistant", content: "OK", toolCalls: [{ id: "tc1", name: "test", arguments: {} }] }, 1),
+      makeMsg({ role: "tool", content: "", toolResults: [{ toolCallId: "tc1", output: "Result1" }] }, 2),
+      makeMsg({ role: "assistant", content: "Next", toolCalls: [{ id: "tc2", name: "test2", arguments: {} }] }, 3),
+      makeMsg({ role: "tool", content: "", toolResults: [{ toolCallId: "tc2", output: "Result2" }] }, 4),
+      makeMsg({ role: "assistant", content: "Done" }, 5),
+    ];
+    mockGetSession.mockResolvedValueOnce(makeSession(messages));
+    mockGenerateResponse.mockResolvedValueOnce({
+      text: "Summary",
+      toolCalls: [],
+    });
+
+    let capturedVerbatimIds: string[] = [];
+    mockCreateSnapshot.mockImplementationOnce((params: { verbatimMessageIds: string[] }) => {
+      capturedVerbatimIds = params.verbatimMessageIds;
+      return Promise.resolve({
+        id: "snap-1",
+        sessionId: "sess-1",
+        summary: "Summary",
+        summaryTokenCount: 5,
+        verbatimMessageIds: params.verbatimMessageIds,
+        verbatimTokenCount: 5,
+        totalTokenCount: 10,
+        triggerTokenCount: 0,
+        modelUsed: "model-1",
+        createdAt: new Date(),
+      });
+    });
+    mockSetActiveSnapshot.mockResolvedValueOnce(undefined);
+    mockUpdateSessionTokenCount.mockResolvedValueOnce(undefined);
+    mockAddMessage.mockResolvedValueOnce(undefined);
+
+    await performCompaction("sess-1", "model-1", "anthropic", 100_000);
+
+    // Find the first verbatim message
+    if (capturedVerbatimIds.length > 0) {
+      const firstVerbatimId = capturedVerbatimIds[0];
+      const firstVerbatimMsg = messages.find((m) => m.id === firstVerbatimId);
+      // First verbatim message should NOT be a tool message
+      expect(firstVerbatimMsg?.role).not.toBe("tool");
+    }
+  });
+
+  it("skips consecutive tool messages at the boundary", async () => {
+    // Edge case: multiple tool messages at the natural boundary
+    const messages = [
+      makeMsg({ role: "user", content: "A" }, 0),
+      makeMsg({ role: "assistant", content: "B", toolCalls: [{ id: "tc1", name: "t1", arguments: {} }] }, 1),
+      makeMsg({ role: "tool", content: "", toolResults: [{ toolCallId: "tc1", output: "R1" }] }, 2),
+      makeMsg({ role: "assistant", content: "C", toolCalls: [{ id: "tc2", name: "t2", arguments: {} }, { id: "tc3", name: "t3", arguments: {} }] }, 3),
+      makeMsg({ role: "tool", content: "", toolResults: [{ toolCallId: "tc2", output: "R2" }] }, 4),
+      makeMsg({ role: "tool", content: "", toolResults: [{ toolCallId: "tc3", output: "R3" }] }, 5),
+      makeMsg({ role: "assistant", content: "D" }, 6),
+      makeMsg({ role: "user", content: "E" }, 7),
+    ];
+    mockGetSession.mockResolvedValueOnce(makeSession(messages));
+    mockGenerateResponse.mockResolvedValueOnce({
+      text: "Summary",
+      toolCalls: [],
+    });
+
+    let capturedVerbatimIds: string[] = [];
+    mockCreateSnapshot.mockImplementationOnce((params: { verbatimMessageIds: string[] }) => {
+      capturedVerbatimIds = params.verbatimMessageIds;
+      return Promise.resolve({
+        id: "snap-1",
+        sessionId: "sess-1",
+        summary: "Summary",
+        summaryTokenCount: 5,
+        verbatimMessageIds: params.verbatimMessageIds,
+        verbatimTokenCount: 5,
+        totalTokenCount: 10,
+        triggerTokenCount: 0,
+        modelUsed: "model-1",
+        createdAt: new Date(),
+      });
+    });
+    mockSetActiveSnapshot.mockResolvedValueOnce(undefined);
+    mockUpdateSessionTokenCount.mockResolvedValueOnce(undefined);
+    mockAddMessage.mockResolvedValueOnce(undefined);
+
+    await performCompaction("sess-1", "model-1", "anthropic", 100_000);
+
+    if (capturedVerbatimIds.length > 0) {
+      const firstVerbatimId = capturedVerbatimIds[0];
+      const firstVerbatimMsg = messages.find((m) => m.id === firstVerbatimId);
+      expect(firstVerbatimMsg?.role).not.toBe("tool");
+    }
+  });
+});

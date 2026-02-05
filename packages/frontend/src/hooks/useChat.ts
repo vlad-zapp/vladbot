@@ -277,13 +277,27 @@ export function useChat(
         },
         onError: (error: ClassifiedError) => {
           if (staleCheck()) return;
-          setMessages((prev) =>
-            prev.map((m, i) =>
-              i === prev.length - 1 && m.role === "assistant"
-                ? { ...m, content: `Error: ${error.message}` }
-                : m,
-            ),
-          );
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1];
+            // If last message is an assistant, update it with the error
+            if (lastMsg?.role === "assistant") {
+              return prev.map((m, i) =>
+                i === prev.length - 1
+                  ? { ...m, content: m.content ? `${m.content}\n\nError: ${error.message}` : `Error: ${error.message}` }
+                  : m,
+              );
+            }
+            // Otherwise, create a new assistant message with the error
+            return [
+              ...prev,
+              {
+                id: `err-${Date.now()}`,
+                role: "assistant" as const,
+                content: `Error: ${error.message}`,
+                timestamp: Date.now(),
+              },
+            ];
+          });
           setIsStreaming(false);
         },
         onUsage: (usage: { inputTokens: number; outputTokens: number }) => {
@@ -481,13 +495,27 @@ export function useChat(
             .catch(() => {});
           break;
         case "error":
-          setMessages((prev) =>
-            prev.map((m, i) =>
-              i === prev.length - 1 && m.role === "assistant"
-                ? { ...m, content: `Error: ${event.data.message}` }
-                : m,
-            ),
-          );
+          setMessages((prev) => {
+            const lastMsg = prev[prev.length - 1];
+            // If last message is an assistant, update it with the error
+            if (lastMsg?.role === "assistant") {
+              return prev.map((m, i) =>
+                i === prev.length - 1
+                  ? { ...m, content: m.content ? `${m.content}\n\nError: ${event.data.message}` : `Error: ${event.data.message}` }
+                  : m,
+              );
+            }
+            // Otherwise, create a new assistant message with the error
+            return [
+              ...prev,
+              {
+                id: `err-${Date.now()}`,
+                role: "assistant" as const,
+                content: `Error: ${event.data.message}`,
+                timestamp: Date.now(),
+              },
+            ];
+          });
           setIsStreaming(false);
           break;
         case "approval_changed":
@@ -707,13 +735,26 @@ export function useChat(
             }
           },
           onError: (error) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentAssistantId
-                  ? { ...m, content: `Error: ${error.message}` }
-                  : m,
-              ),
-            );
+            setMessages((prev) => {
+              // If we have an assistant message for this stream, update it
+              if (currentAssistantId && prev.some((m) => m.id === currentAssistantId)) {
+                return prev.map((m) =>
+                  m.id === currentAssistantId
+                    ? { ...m, content: m.content ? `${m.content}\n\nError: ${error.message}` : `Error: ${error.message}` }
+                    : m,
+                );
+              }
+              // Otherwise, create a new assistant message with the error
+              return [
+                ...prev,
+                {
+                  id: `err-${Date.now()}`,
+                  role: "assistant" as const,
+                  content: `Error: ${error.message}`,
+                  timestamp: Date.now(),
+                },
+              ];
+            });
           },
           onDebug: (entry) => {
             const taggedEntry = {

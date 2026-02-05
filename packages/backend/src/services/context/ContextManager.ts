@@ -320,9 +320,28 @@ function calculateVerbatimMessages(
   // Ensure at least 2 messages in verbatim when possible
   count = Math.max(count, Math.min(2, messages.length - 2));
 
+  // Ensure verbatim doesn't start with a tool message (which would be orphaned
+  // without its preceding assistant message with tool_calls)
+  let splitIdx = messages.length - count;
+  while (splitIdx < messages.length && messages[splitIdx].role === "tool") {
+    splitIdx++;
+    count--;
+  }
+
+  // If we consumed all messages trying to skip tools, fall back to keeping at least 2
+  if (count < 2 && messages.length >= 4) {
+    count = 2;
+    splitIdx = messages.length - count;
+    // Try again from this position
+    while (splitIdx < messages.length && messages[splitIdx].role === "tool") {
+      splitIdx++;
+      count--;
+    }
+  }
+
   return {
-    summarize: messages.slice(0, messages.length - count),
-    verbatim: messages.slice(messages.length - count),
+    summarize: messages.slice(0, splitIdx),
+    verbatim: messages.slice(splitIdx),
   };
 }
 
