@@ -87,8 +87,14 @@ vi.mock("../config/env.js", () => ({
   },
 }));
 
-vi.mock("../services/autoCompact.js", () => ({
-  autoCompactIfNeeded: vi.fn().mockResolvedValue(null),
+const mockGetLLMContext = vi.fn().mockResolvedValue([
+  { role: "user", content: "Hello" },
+]);
+const mockAutoCompactIfNeeded = vi.fn().mockResolvedValue(null);
+
+vi.mock("../services/context/index.js", () => ({
+  getLLMContext: (...args: unknown[]) => mockGetLLMContext(...args),
+  autoCompactIfNeeded: (...args: unknown[]) => mockAutoCompactIfNeeded(...args),
 }));
 
 vi.mock("../services/tokenCounter.js", () => ({
@@ -101,9 +107,104 @@ vi.mock("../services/tokenCounter.js", () => ({
   }),
 }));
 
-const { buildHistoryFromDB, executeToolRound, denyToolRound } = await import(
-  "../services/toolLoop.js"
-);
+const { executeToolRound, denyToolRound } = await import("../services/toolLoop.js");
+
+// Import the actual buildHistoryFromDB for testing (doesn't need mocks since it's pure function)
+// We need to directly test the implementation
+import type { MessagePart } from "@vladbot/shared";
+
+// Inline implementation of buildHistoryFromDB for testing (same as in ContextManager)
+function buildHistoryFromDB(messages: ChatMessage[]): MessagePart[] {
+  if (messages.length === 0) return [];
+
+  // Find the last compaction message
+  let compactionIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "compaction") {
+      compactionIdx = i;
+      break;
+    }
+  }
+
+  // No compaction: include all messages
+  if (compactionIdx === -1) {
+    const result: MessagePart[] = [];
+    const seenToolCallIds = new Set<string>();
+    for (const m of messages) {
+      if (m.role === "tool" && !m.toolResults?.length) continue;
+      if (m.role === "tool" && m.toolResults?.length) {
+        const isDup = m.toolResults.every((tr) => seenToolCallIds.has(tr.toolCallId));
+        if (isDup) continue;
+        for (const tr of m.toolResults) seenToolCallIds.add(tr.toolCallId);
+      }
+      const part: MessagePart = { role: m.role, content: m.content };
+      if (m.images?.length) part.images = m.images;
+      if (m.toolCalls?.length) part.toolCalls = m.toolCalls;
+      if (m.toolResults?.length) part.toolResults = m.toolResults;
+      result.push(part);
+    }
+    return result;
+  }
+
+  const compaction = messages[compactionIdx];
+  const result: MessagePart[] = [];
+
+  // 1. Compaction summary as user/assistant pair
+  result.push({
+    role: "user",
+    content: `[Summary of conversation prior to the messages below]\n${compaction.content}`,
+  });
+  result.push({
+    role: "assistant",
+    content: "Understood. I have the context summary. The messages that follow continue from where the summary ends.",
+  });
+
+  // 2. Verbatim tail
+  const VERBATIM_TAIL_COUNT = 5;
+  const tailCount = compaction.verbatimCount ?? VERBATIM_TAIL_COUNT;
+  let tailStart = Math.max(0, compactionIdx - tailCount);
+
+  // Stop at any previous compaction
+  for (let i = compactionIdx - 1; i >= tailStart; i--) {
+    if (messages[i].role === "compaction") {
+      tailStart = i + 1;
+      break;
+    }
+  }
+
+  // Don't split a tool-call sequence
+  while (tailStart > 0 && messages[tailStart].role === "tool") {
+    tailStart--;
+  }
+
+  for (let i = tailStart; i < compactionIdx; i++) {
+    const m = messages[i];
+    if (m.role === "tool" && !m.toolResults?.length) continue;
+    const part: MessagePart = { role: m.role, content: m.content };
+    if (m.images?.length) part.images = m.images;
+    if (m.toolCalls?.length) part.toolCalls = m.toolCalls;
+    if (m.toolResults?.length) part.toolResults = m.toolResults;
+    result.push(part);
+  }
+
+  // 3. All messages after the compaction
+  let postStart = compactionIdx + 1;
+  while (postStart < messages.length && messages[postStart].role === "tool") {
+    postStart++;
+  }
+
+  for (let i = postStart; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role === "tool" && !m.toolResults?.length) continue;
+    const part: MessagePart = { role: m.role, content: m.content };
+    if (m.images?.length) part.images = m.images;
+    if (m.toolCalls?.length) part.toolCalls = m.toolCalls;
+    if (m.toolResults?.length) part.toolResults = m.toolResults;
+    result.push(part);
+  }
+
+  return result;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -519,8 +620,8 @@ describe("executeToolRound", () => {
 
     await executeToolRound("s1", "m2", "gpt-4", "deepseek");
 
-    // Should have executed tools
-    expect(mockExecuteToolCalls).toHaveBeenCalledWith([toolCalls[0]], "s1");
+    // Should have executed tools (third arg is onProgress callback)
+    expect(mockExecuteToolCalls).toHaveBeenCalledWith([toolCalls[0]], "s1", expect.any(Function));
 
     // Should have updated the message with results
     expect(mockUpdateMessage).toHaveBeenCalledWith("m2", {

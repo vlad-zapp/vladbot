@@ -239,4 +239,37 @@ describe("mergeMessages", () => {
     expect(merged[0]).toBe(local[0]);
     expect(merged[1]).toBe(local[1]);
   });
+
+  it("updates to cancelled status from DB", () => {
+    // When user cancels a tool, the backend saves with cancelled status.
+    // The frontend should honor the DB value (source of truth).
+    const local = [
+      msg({ id: "1", content: "text", approvalStatus: "pending" }),
+    ];
+    const db = [
+      msg({ id: "1", content: "text", approvalStatus: "cancelled" }),
+    ];
+
+    const merged = mergeMessages(local, db);
+
+    // Backend is source of truth - cancelled status from DB should be used
+    expect(merged[0]).toBe(db[0]);
+    expect(merged[0].approvalStatus).toBe("cancelled");
+  });
+
+  it("shows cancelled status consistently after DB sync", () => {
+    // After interrupt, both local and DB have cancelled status - preserve reference
+    const local = [
+      msg({ id: "1", content: "text", approvalStatus: "cancelled" }),
+    ];
+    const db = [
+      msg({ id: "1", content: "text", approvalStatus: "cancelled" }),
+    ];
+
+    const merged = mergeMessages(local, db);
+
+    // Same status - preserve local reference to avoid re-renders
+    expect(merged[0]).toBe(local[0]);
+    expect(merged[0].approvalStatus).toBe("cancelled");
+  });
 });

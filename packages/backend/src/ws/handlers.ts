@@ -20,21 +20,26 @@ import {
   updateSessionTokenUsage,
 } from "../services/sessionStore.js";
 import { saveSessionFile } from "../services/sessionFiles.js";
-import { compactSession } from "../services/compaction.js";
 import {
   createStream,
   getStream,
   pushEvent,
   scheduleRemoval,
 } from "../services/streamRegistry.js";
-import { executeToolRound, denyToolRound, buildHistoryFromDB } from "../services/toolLoop.js";
+import { executeToolRound, denyToolRound } from "../services/toolLoop.js";
 import { getToolDefinitions, executeToolCalls, validateToolCalls } from "../services/tools/index.js";
 import { estimateMessageTokens } from "../services/tokenCounter.js";
 import { getSetting, putSettings } from "../services/settingsStore.js";
 import { getAllRuntimeSettings } from "../config/runtimeSettings.js";
 import { getProvider } from "../services/ai/ProviderFactory.js";
 import { classifyLLMError } from "../services/ai/errorClassifier.js";
-import { autoCompactIfNeeded } from "../services/autoCompact.js";
+import {
+  getLLMContext,
+  performCompaction,
+  autoCompactIfNeeded,
+  computeToolStatuses,
+  enrichMessageForDisplay,
+} from "../services/context/index.js";
 import { generateSessionName } from "../services/sessionNaming.js";
 import {
   chatRequestSchema,
@@ -51,45 +56,6 @@ class WsError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Tool status computation
-// ---------------------------------------------------------------------------
-
-type ToolCallStatus = "pending" | "executing" | "done" | "cancelled" | "waiting";
-
-function computeToolStatuses(message: ChatMessage): Record<string, ToolCallStatus> | undefined {
-  if (!message.toolCalls?.length) return undefined;
-
-  const results = message.toolResults ?? [];
-  const status = message.approvalStatus;
-  const statuses: Record<string, ToolCallStatus> = {};
-
-  for (let i = 0; i < message.toolCalls.length; i++) {
-    const tc = message.toolCalls[i];
-    const result = results.find((r) => r.toolCallId === tc.id);
-
-    if (result) {
-      statuses[tc.id] = "done";
-    } else if (status === "pending" && results.length === 0) {
-      statuses[tc.id] = "pending";
-    } else if (status === "denied") {
-      statuses[tc.id] = "cancelled";
-    } else {
-      // Approved — check if a previous tool errored
-      const prevErrored = results.some((r) => r.isError);
-      if (prevErrored) {
-        statuses[tc.id] = "cancelled";
-      } else if (i === results.length) {
-        statuses[tc.id] = "executing";
-      } else {
-        statuses[tc.id] = "waiting";
-      }
-    }
-  }
-
-  return statuses;
 }
 
 // ---------------------------------------------------------------------------
@@ -297,11 +263,8 @@ registerHandler("messages.list", async (payload) => {
     limit: parsed.data.limit,
   });
 
-  // Compute tool statuses for assistant messages with tool calls
-  const messages = result.messages.map((m) => {
-    if (m.role !== "assistant" || !m.toolCalls?.length) return m;
-    return { ...m, toolStatuses: computeToolStatuses(m) };
-  });
+  // Enrich messages with backend-computed display hints (displayType, toolStatuses)
+  const messages = result.messages.map(enrichMessageForDisplay);
 
   return { messages, hasMore: result.hasMore };
 });
@@ -526,7 +489,7 @@ registerHandler("sessions.compact", async (payload, ctx) => {
   // Run compaction in background, return ACK immediately
   (async () => {
     try {
-      const result = await compactSession(
+      const result = await performCompaction(
         sessionId,
         modelInfo.id,
         modelInfo.provider,
@@ -535,6 +498,12 @@ registerHandler("sessions.compact", async (payload, ctx) => {
       const doneEvent = { type: "compaction" as const, data: result.compactionMessage };
       ctx.push(sessionId, doneEvent);
       ctx.broadcastToSession(sessionId, doneEvent);
+
+      // Update and push new token usage
+      await updateSessionTokenUsage(sessionId, result.newTokenUsage);
+      const usageEvent = { type: "usage" as const, data: result.newTokenUsage };
+      ctx.push(sessionId, usageEvent);
+      ctx.broadcastToSession(sessionId, usageEvent);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Compaction failed";
       console.error("Manual compaction failed:", err);
@@ -585,7 +554,9 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
     return { compacted: false };
   }
 
-  const pct = (session.tokenUsage.inputTokens / newModelInfo.contextWindow) * 100;
+  // Use total tokens (input + output) to match the context indicator
+  const totalTokens = session.tokenUsage.inputTokens + session.tokenUsage.outputTokens;
+  const pct = (totalTokens / newModelInfo.contextWindow) * 100;
   if (pct < 80) {
     return { compacted: false };
   }
@@ -599,7 +570,7 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
     // Use the OLD model for summarization (it has a larger context window and
     // can handle the full conversation), but the NEW model's context window
     // for the verbatim tail budget (that's the target context we're compacting for).
-    const result = await compactSession(
+    const result = await performCompaction(
       sessionId,
       oldModelInfo.id,
       oldModelInfo.provider,
@@ -608,6 +579,13 @@ registerHandler("sessions.switchModel", async (payload, ctx) => {
     const doneEvent = { type: "compaction" as const, data: result.compactionMessage };
     ctx.push(sessionId, doneEvent);
     ctx.broadcastToSession(sessionId, doneEvent);
+
+    // Update and push new token usage
+    await updateSessionTokenUsage(sessionId, result.newTokenUsage);
+    const usageEvent = { type: "usage" as const, data: result.newTokenUsage };
+    ctx.push(sessionId, usageEvent);
+    ctx.broadcastToSession(sessionId, usageEvent);
+
     return { compacted: true, compactionMessage: result.compactionMessage };
   } catch (err) {
     console.error("Model-switch compaction failed:", err);
@@ -766,12 +744,6 @@ registerHandler("chat.stream", async (payload, ctx) => {
     stream.subscribers.add(subscriber);
     ctx.addSubscription(sessionId, subscriber);
 
-    // Send snapshot to the initiating client so it knows the assistantId
-    ctx.push(sessionId, {
-      type: "snapshot",
-      data: { assistantId, content: "", model, toolCalls: [] },
-    });
-
     // Auto-subscribe all other session watchers so they see the stream live
     for (const watcher of getSessionWatchers(sessionId)) {
       if (watcher.ws === ctx.ws) continue; // Skip the initiating client
@@ -780,19 +752,28 @@ registerHandler("chat.stream", async (payload, ctx) => {
       };
       stream.subscribers.add(watcherSub);
       watcher.addSubscription(sessionId, watcherSub);
+    }
+  }
 
-      // Send snapshot so watcher's client picks up the stream immediately
+  // Helper to send snapshot to all subscribers (called after pre-check compaction)
+  const sendSnapshot = () => {
+    ctx.push(sessionId, {
+      type: "snapshot",
+      data: { assistantId, content: "", model, toolCalls: [] },
+    });
+    for (const watcher of getSessionWatchers(sessionId)) {
+      if (watcher.ws === ctx.ws) continue;
       watcher.push(sessionId, {
         type: "snapshot",
         data: { assistantId, content: "", model, toolCalls: [] },
       });
     }
-  }
+  };
 
   // Run streaming in background — return ACK immediately
   const streamAsync = async () => {
     try {
-      const session = await getSession(sessionId);
+      let session = await getSession(sessionId);
       if (!session) throw new Error("Session not found");
 
       // Auto-name session on first user message (fire-and-forget)
@@ -807,7 +788,38 @@ registerHandler("chat.stream", async (payload, ctx) => {
           .catch(console.error);
       }
 
-      const history = buildHistoryFromDB(session.messages);
+      // Pre-check: compact BEFORE LLM call if context is near/over limit
+      // Estimate tokens from actual messages (more accurate than stale tokenUsage field)
+      if (modelInfo.contextWindow > 0) {
+        const estimatedTokens = session.messages.reduce((sum, m) => sum + (m.tokenCount ?? 0), 0);
+        // Also add approximate overhead for system prompt and message formatting (~500 tokens)
+        const totalTokens = estimatedTokens + 500;
+        const pct = (totalTokens / modelInfo.contextWindow) * 100;
+        console.log(`[Compaction] Pre-check: ${totalTokens} estimated tokens (${estimatedTokens} from messages), ${pct.toFixed(1)}% of ${modelInfo.contextWindow} context`);
+        if (pct >= 85) {
+          // Compact proactively before context overflow
+          console.log("[Compaction] Starting pre-stream compaction...");
+          pushEvent(sessionId, { type: "compaction_started", data: { sessionId } });
+          try {
+            const result = await performCompaction(sessionId, model, providerName, modelInfo.contextWindow);
+            console.log("[Compaction] Completed, new usage:", result.newTokenUsage);
+            pushEvent(sessionId, { type: "compaction", data: result.compactionMessage });
+            await updateSessionTokenUsage(sessionId, result.newTokenUsage);
+            pushEvent(sessionId, { type: "usage", data: result.newTokenUsage });
+            // Reload session with updated messages
+            session = (await getSession(sessionId))!;
+          } catch (err) {
+            console.error("[Compaction] Pre-stream compaction failed:", err);
+            const message = err instanceof Error ? err.message : "Compaction failed";
+            pushEvent(sessionId, { type: "compaction_error", data: { sessionId, error: message } });
+          }
+        }
+      }
+
+      // Send snapshot AFTER pre-check compaction so compaction message appears first
+      sendSnapshot();
+
+      const history = await getLLMContext(sessionId);
 
       const provider = getProvider(providerName);
       const stream = getStream(sessionId);
@@ -931,11 +943,29 @@ registerHandler("chat.stream", async (payload, ctx) => {
         if (!hasToolCalls) {
           const stream = getStream(sessionId);
           if (stream?.usage) {
-            const compactionMsg = await autoCompactIfNeeded(
-              sessionId, model, providerName, stream.usage,
-            );
-            if (compactionMsg) {
-              pushEvent(sessionId, { type: "compaction", data: compactionMsg });
+            // Check threshold first before starting compaction
+            const totalTokens = stream.usage.inputTokens + stream.usage.outputTokens;
+            const pct = modelInfo.contextWindow > 0
+              ? (totalTokens / modelInfo.contextWindow) * 100
+              : 0;
+            console.log(`[Compaction] Post-done check: ${totalTokens} tokens, ${pct.toFixed(1)}% of ${modelInfo.contextWindow}`);
+
+            if (pct >= 90) {
+              // Send compaction_started BEFORE starting compaction
+              pushEvent(sessionId, { type: "compaction_started", data: { sessionId } });
+
+              const compactResult = await autoCompactIfNeeded(
+                sessionId, model, providerName, stream.usage,
+              );
+              if (compactResult) {
+                pushEvent(sessionId, { type: "compaction", data: compactResult.compactionMessage });
+                // Update and push new token usage
+                await updateSessionTokenUsage(sessionId, compactResult.newTokenUsage);
+                pushEvent(sessionId, { type: "usage", data: compactResult.newTokenUsage });
+              } else {
+                // Compaction was expected but didn't happen (error?) - clear the indicator
+                pushEvent(sessionId, { type: "compaction_error", data: { sessionId, error: "Compaction check passed but compaction returned null" } });
+              }
             }
           }
         }
@@ -963,7 +993,8 @@ registerHandler("chat.stream", async (payload, ctx) => {
               model,
               timestamp: Date.now(),
               toolCalls: stream.toolCalls.length > 0 ? stream.toolCalls : undefined,
-              approvalStatus: stream.toolCalls.length > 0 ? ("pending" as const) : undefined,
+              // When interrupted, mark as cancelled (not pending) so UI shows correct status
+              approvalStatus: stream.toolCalls.length > 0 ? ("cancelled" as const) : undefined,
               llmRequest: stream.requestBody,
               llmResponse: {
                 content: stream.content,

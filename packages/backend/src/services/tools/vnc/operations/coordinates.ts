@@ -272,8 +272,8 @@ async function findWithVisionModel(
   let visionRaw: string | undefined;
   if (sessionId) {
     visionRaw = await getSessionVisionModel(sessionId) || undefined;
-  }
-  if (!visionRaw) {
+    // No fallback to global — session value is authoritative
+  } else {
     visionRaw = await getRuntimeSetting("vision_model");
   }
   if (!visionRaw) {

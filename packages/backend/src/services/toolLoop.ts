@@ -1,7 +1,6 @@
 import { v4 as uuid } from "uuid";
 import type {
   ChatMessage,
-  MessagePart,
   SSEEvent,
   ToolCall,
   ToolDefinition,
@@ -15,11 +14,10 @@ import {
   atomicApprove,
   getSessionAutoApprove,
 } from "./sessionStore.js";
-import { executeToolCalls, validateToolCalls } from "./tools/index.js";
+import { executeToolCalls, validateToolCalls, type ToolProgressCallback } from "./tools/index.js";
 import { getProvider } from "./ai/ProviderFactory.js";
 import { classifyLLMError } from "./ai/errorClassifier.js";
-import { autoCompactIfNeeded } from "./autoCompact.js";
-import { VERBATIM_TAIL_COUNT } from "@vladbot/shared";
+import { getLLMContext, autoCompactIfNeeded } from "./context/index.js";
 import { estimateMessageTokens } from "./tokenCounter.js";
 import {
   createStream,
@@ -30,107 +28,6 @@ import {
 } from "./streamRegistry.js";
 
 const MAX_TOOL_ROUNDS = 10;
-
-/** Convert a ChatMessage to a MessagePart (wire format for the LLM). */
-function toMessagePart(m: ChatMessage): MessagePart {
-  const part: MessagePart = { role: m.role, content: m.content };
-  if (m.images?.length) part.images = m.images;
-  if (m.toolCalls?.length) part.toolCalls = m.toolCalls;
-  if (m.toolResults?.length) part.toolResults = m.toolResults;
-  return part;
-}
-
-/**
- * Rebuild MessagePart[] history from the DB for a session.
- *
- * Finds the last compaction message and builds:
- *   1. Compaction summary as a user/assistant pair
- *   2. Verbatim tail — messages immediately before the compaction, count
- *      read from compaction.verbatimCount (falls back to VERBATIM_TAIL_COUNT
- *      for old compactions without it). Stops at previous compaction or start.
- *   3. All messages after the compaction
- *
- * The verbatim tail provides precise boundary context that was excluded from
- * the compaction summary, avoiding duplication.
- */
-export function buildHistoryFromDB(messages: ChatMessage[]): MessagePart[] {
-  if (messages.length === 0) return [];
-
-  // Find the last compaction message
-  let compactionIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "compaction") {
-      compactionIdx = i;
-      break;
-    }
-  }
-
-  // No compaction: include all messages as-is
-  if (compactionIdx === -1) {
-    const result: MessagePart[] = [];
-    const seenToolCallIds = new Set<string>();
-    for (const m of messages) {
-      if (m.role === "tool" && !m.toolResults?.length) continue;
-      // Skip duplicate tool messages (same toolCallId already seen)
-      if (m.role === "tool" && m.toolResults?.length) {
-        const isDup = m.toolResults.every((tr) => seenToolCallIds.has(tr.toolCallId));
-        if (isDup) continue;
-        for (const tr of m.toolResults) seenToolCallIds.add(tr.toolCallId);
-      }
-      result.push(toMessagePart(m));
-    }
-    return result;
-  }
-
-  const compaction = messages[compactionIdx];
-  const result: MessagePart[] = [];
-
-  // 1. Compaction summary as user/assistant pair
-  result.push({
-    role: "user",
-    content: `[Summary of conversation prior to the messages below]\n${compaction.content}`,
-  });
-  result.push({
-    role: "assistant",
-    content:
-      "Understood. I have the context summary. The messages that follow continue from where the summary ends.",
-  });
-
-  // 2. Verbatim tail — use stored verbatimCount, fall back to constant
-  const tailCount = compaction.verbatimCount ?? VERBATIM_TAIL_COUNT;
-  let tailStart = Math.max(0, compactionIdx - tailCount);
-  // Stop at any previous compaction
-  for (let i = compactionIdx - 1; i >= tailStart; i--) {
-    if (messages[i].role === "compaction") {
-      tailStart = i + 1;
-      break;
-    }
-  }
-  // Don't split a tool-call sequence: if tailStart lands on a tool message,
-  // walk back to include the preceding assistant message with tool_calls.
-  while (tailStart > 0 && messages[tailStart].role === "tool") {
-    tailStart--;
-  }
-  for (let i = tailStart; i < compactionIdx; i++) {
-    const m = messages[i];
-    if (m.role === "tool" && !m.toolResults?.length) continue;
-    result.push(toMessagePart(m));
-  }
-
-  // 3. All messages after the compaction
-  // Skip leading tool messages that lost their assistant parent
-  let postStart = compactionIdx + 1;
-  while (postStart < messages.length && messages[postStart].role === "tool") {
-    postStart++;
-  }
-  for (let i = postStart; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === "tool" && !m.toolResults?.length) continue;
-    result.push(toMessagePart(m));
-  }
-
-  return result;
-}
 
 /**
  * Execute a tool round: validate + run tools, save results, then stream
@@ -199,6 +96,14 @@ export async function executeToolRound(
   let hadError = false;
   let wasInterrupted = false;
 
+  // Progress callback that pushes SSE events
+  const onProgress: ToolProgressCallback = (toolCallId, toolName, progress, total, message) => {
+    pushEvent(sessionId, {
+      type: "tool_progress",
+      data: { toolCallId, toolName, progress, total, message },
+    });
+  };
+
   for (let i = 0; i < toolCalls.length; i++) {
     // Check if user cancelled before starting next tool
     const stream = getStream(sessionId);
@@ -220,7 +125,7 @@ export async function executeToolRound(
 
     try {
       // This is async - user can cancel while this runs
-      const results = await executeToolCalls([toolCalls[i]], sessionId);
+      const results = await executeToolCalls([toolCalls[i]], sessionId, onProgress);
       const result = results[0];
 
       // Check again after tool finished - user may have cancelled during execution
@@ -313,11 +218,10 @@ async function streamNextRound(
   providerName: string,
   tools?: ToolDefinition[],
 ): Promise<void> {
-  // Re-read session to get updated history
-  const session = await getSession(sessionId);
-  if (!session) return;
+  // Get LLM context (handles snapshots or legacy compaction messages)
+  const history = await getLLMContext(sessionId);
+  if (history.length === 0) return;
 
-  const history = buildHistoryFromDB(session.messages);
   const newAssistantId = uuid();
 
   // Reuse existing stream or create a new one
@@ -444,11 +348,11 @@ async function streamNextRound(
     if (currentStream && !hasToolCalls) {
       // Auto-compact if context usage exceeds threshold
       if (currentStream.usage) {
-        const compactionMsg = await autoCompactIfNeeded(
+        const compactionResult = await autoCompactIfNeeded(
           sessionId, model, providerName, currentStream.usage,
         );
-        if (compactionMsg) {
-          pushEvent(sessionId, { type: "compaction", data: compactionMsg });
+        if (compactionResult) {
+          pushEvent(sessionId, { type: "compaction", data: compactionResult.compactionMessage });
         }
       }
       scheduleRemoval(sessionId);

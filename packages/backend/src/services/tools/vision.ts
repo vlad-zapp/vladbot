@@ -9,8 +9,9 @@ export const visionTool: Tool = {
     name: "vision",
     description:
       "Analyze an image using a vision-capable model. " +
-      "Use this tool to examine images from previous tool results (e.g. screenshots). " +
-      "You decide what to ask — provide a specific prompt describing what information you need from the image.",
+      "ONLY use when the user explicitly asks to analyze an image or see visual details. " +
+      "Do NOT use for browser automation - use browser_describe instead which is faster and more reliable. " +
+      "Requires a previous tool result with an image (e.g. screenshot).",
     operations: {
       analyze: {
         params: {

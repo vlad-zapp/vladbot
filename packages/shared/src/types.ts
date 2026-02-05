@@ -57,7 +57,7 @@ export interface ChatMessage {
   timestamp: number;
   toolCalls?: ToolCall[];
   toolResults?: ToolResult[];
-  approvalStatus?: "pending" | "approved" | "denied";
+  approvalStatus?: "pending" | "approved" | "denied" | "cancelled";
   llmRequest?: unknown;
   llmResponse?: unknown;
   /** Number of messages before this compaction to include verbatim in LLM context. Only set on compaction messages. */
@@ -68,6 +68,8 @@ export interface ChatMessage {
   rawTokenCount?: number;
   /** Backend-computed tool execution statuses, keyed by tool call ID. */
   toolStatuses?: Record<string, "pending" | "executing" | "done" | "cancelled" | "waiting">;
+  /** Backend-computed display type hint for rendering. */
+  displayType?: "user" | "assistant" | "tool_result" | "context_summary";
 }
 
 export interface ClassifiedError {
@@ -96,7 +98,8 @@ export type SSEEvent =
   | { type: "session_deleted"; data: { id: string } }
   | { type: "session_updated"; data: Session }
   | { type: "memory_changed"; data: Record<string, never> }
-  | { type: "approval_changed"; data: { messageId: string; approvalStatus: string } };
+  | { type: "approval_changed"; data: { messageId: string; approvalStatus: string } }
+  | { type: "tool_progress"; data: { toolCallId: string; toolName: string; progress: number; total: number; message?: string } };
 
 // Request/Response types
 export interface ChatRequest {

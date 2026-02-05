@@ -91,6 +91,19 @@ function ChatInput({ onSend, onCancel, disabled, isStreaming, autoApprove, onTog
     }
   }, [disabled]);
 
+  // Auto-resize textarea as content changes
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    // Reset height to measure true content height
+    textarea.style.height = "auto";
+    const maxHeight = 200;
+    const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${newHeight}px`;
+    // Only show scrollbar when content exceeds max height
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input]);
+
   return (
     <form className="chat-input-form" onSubmit={handleSubmit}>
       {images.length > 0 && (

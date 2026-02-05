@@ -10,7 +10,7 @@ import {
   scheduleRemoval,
 } from "../services/streamRegistry.js";
 import { chatRequestSchema, toolExecuteSchema } from "./schemas.js";
-import { buildHistoryFromDB } from "../services/toolLoop.js";
+import { getLLMContext } from "../services/context/index.js";
 import { estimateMessageTokens } from "../services/tokenCounter.js";
 import { classifyLLMError } from "../services/ai/errorClassifier.js";
 import { getSetting } from "../services/settingsStore.js";
@@ -76,9 +76,8 @@ router.post("/chat/stream", async (req, res) => {
   }
 
   try {
-    const session = await getSession(sessionId);
-    if (!session) throw new Error("Session not found");
-    const history = buildHistoryFromDB(session.messages);
+    const history = await getLLMContext(sessionId);
+    if (history.length === 0) throw new Error("Session not found or empty");
 
     const provider = getProvider(providerName);
     const aiStream = provider.generateStream(

@@ -205,18 +205,13 @@ export class GeminiProvider implements AIProviderInterface {
       config.tools = this.convertTools(tools);
     }
 
-    yield { type: "debug", debug: { direction: "request" as const, body: { model, contents, config } } };
-
-    const requestOptions: Record<string, unknown> = {
-      model,
-      contents,
-      config,
-    };
     if (signal) {
-      requestOptions.signal = signal;
+      config.abortSignal = signal;
     }
 
-    const response = await this.client.models.generateContentStream(requestOptions);
+    yield { type: "debug", debug: { direction: "request" as const, body: { model, contents, config } } };
+
+    const response = await this.client.models.generateContentStream({ model, contents, config });
 
     let lastUsage: { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
     for await (const chunk of response) {

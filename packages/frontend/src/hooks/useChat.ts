@@ -62,6 +62,7 @@ export function mergeMessages(local: ChatMessage[], db: ChatMessage[]): ChatMess
   const merged = db.map((dbMsg) => {
     const localMsg = localMap.get(dbMsg.id);
     if (!localMsg) return dbMsg;
+
     // If the visible content is identical AND the local version already has
     // all the metadata the DB version has, keep the local reference to avoid
     // unnecessary re-renders. Otherwise take the richer DB version.
@@ -118,6 +119,7 @@ export function useChat(
   const [compactionError, setCompactionError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [toolProgress, setToolProgress] = useState<Record<string, { progress: number; total: number; message?: string }>>({});
   const sessionIdRef = useRef<string | null>(null);
   const skipLoadRef = useRef(false);
   /** Synchronous guard against double-send (set true before first await). */
@@ -220,6 +222,18 @@ export function useChat(
               return { ...m, toolResults: [...(m.toolResults ?? []), result] };
             }),
           );
+          // Clear progress for this tool
+          setToolProgress((prev) => {
+            const { [result.toolCallId]: _, ...rest } = prev;
+            return rest;
+          });
+        },
+        onToolProgress: (data: { toolCallId: string; progress: number; total: number; message?: string }) => {
+          if (staleCheck()) return;
+          setToolProgress((prev) => ({
+            ...prev,
+            [data.toolCallId]: { progress: data.progress, total: data.total, message: data.message },
+          }));
         },
         onDone: (hasToolCalls: boolean) => {
           if (staleCheck()) return;
@@ -349,6 +363,40 @@ export function useChat(
         return;
       }
 
+      // Compaction events are always relevant, even during local streaming
+      if (event.type === "compaction_started") {
+        setIsCompacting(true);
+        setCompactionError(null);
+        return;
+      }
+      if (event.type === "compaction") {
+        setMessages((prev) => [...prev, event.data]);
+        setIsCompacting(false);
+        return;
+      }
+      if (event.type === "compaction_error") {
+        setCompactionError(event.data.error);
+        setTimeout(() => setCompactionError(null), 5000);
+        setIsCompacting(false);
+        return;
+      }
+      // Usage events are always relevant (for context meter updates after compaction)
+      if (event.type === "usage") {
+        setTokenUsage(event.data);
+        tokenUsageCacheRef.current.set(sid, event.data);
+        return;
+      }
+
+      // Tool progress events are always relevant for showing progress UI
+      if (event.type === "tool_progress") {
+        const { toolCallId, progress, total, message } = event.data;
+        setToolProgress((prev) => ({
+          ...prev,
+          [toolCallId]: { progress, total, message },
+        }));
+        return;
+      }
+
       // Skip stream events when a local stream is handling them for THIS session
       if (streamStateRef.current?.sessionId === sid) return;
 
@@ -405,6 +453,11 @@ export function useChat(
               return { ...m, toolResults: [...(m.toolResults ?? []), event.data] };
             }),
           );
+          // Clear progress for this tool
+          setToolProgress((prev) => {
+            const { [event.data.toolCallId]: _, ...rest } = prev;
+            return rest;
+          });
           break;
         case "auto_approved":
           setMessages((prev) =>
@@ -436,23 +489,6 @@ export function useChat(
             ),
           );
           setIsStreaming(false);
-          break;
-        case "usage":
-          setTokenUsage(event.data);
-          tokenUsageCacheRef.current.set(sid, event.data);
-          break;
-        case "compaction_started":
-          setIsCompacting(true);
-          setCompactionError(null);
-          break;
-        case "compaction":
-          setMessages((prev) => [...prev, event.data]);
-          setIsCompacting(false);
-          break;
-        case "compaction_error":
-          setCompactionError(event.data.error);
-          setTimeout(() => setCompactionError(null), 5000);
-          setIsCompacting(false);
           break;
         case "approval_changed":
           setMessages((prev) =>
@@ -635,6 +671,18 @@ export function useChat(
                 return { ...m, toolResults: [...(m.toolResults ?? []), result] };
               }),
             );
+            // Clear progress for this tool
+            setToolProgress((prev) => {
+              const { [result.toolCallId]: _, ...rest } = prev;
+              return rest;
+            });
+          },
+          onToolProgress: (data) => {
+            if (streamStateRef.current?.aborted) return;
+            setToolProgress((prev) => ({
+              ...prev,
+              [data.toolCallId]: { progress: data.progress, total: data.total, message: data.message },
+            }));
           },
           onAutoApproved: (messageId) => {
             if (streamStateRef.current?.aborted) return;
@@ -964,14 +1012,34 @@ export function useChat(
     const sessionId = activeSessionId ?? sessionIdRef.current;
     if (!sessionId) return;
 
-    // Tell backend to append interrupted message to the stream content
-    // Backend will push it as a token event, then we set abort flag
+    // Immediately update UI to show cancellation
+    setIsStreaming(false);
+
+    // Clear all tool progress immediately
+    setToolProgress({});
+
+    // Mark any executing/waiting tools as cancelled immediately
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.role !== "assistant" || !m.toolCalls?.length) return m;
+        // Check if this message has any tools still in progress
+        const hasExecutingTools = m.toolCalls.some((tc) => {
+          const result = m.toolResults?.find((r) => r.toolCallId === tc.id);
+          return !result; // No result = still in progress
+        });
+        if (!hasExecutingTools) return m;
+        // Mark as cancelled so tool bubbles show "Cancelled by user"
+        return { ...m, approvalStatus: "cancelled" as const };
+      }),
+    );
+
+    // Tell backend to stop execution
     wsClient.request("messages.interrupt", { sessionId })
       .then(() => {
         if (streamStateRef.current?.sessionId === sessionId) {
           streamStateRef.current.aborted = true;
+          streamStateRef.current = null;
         }
-        setIsStreaming(false);
       })
       .catch(console.error);
   }, [activeSessionId]);
@@ -997,5 +1065,6 @@ export function useChat(
     loadOlderMessages,
     trimToLatestPage,
     cancelStream,
+    toolProgress,
   };
 }

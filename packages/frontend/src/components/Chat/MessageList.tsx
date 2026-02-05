@@ -16,6 +16,7 @@ interface MessageListProps {
   isLoadingOlder?: boolean;
   onLoadMore?: () => void;
   onTrimOlder?: () => void;
+  toolProgress?: Record<string, { progress: number; total: number; message?: string }>;
 }
 
 export default function MessageList({
@@ -30,6 +31,7 @@ export default function MessageList({
   isLoadingOlder,
   onLoadMore,
   onTrimOlder,
+  toolProgress,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -104,6 +106,9 @@ export default function MessageList({
     };
   }, []);
 
+  // Check if there's any active tool progress (tools being executed)
+  const hasActiveToolProgress = toolProgress && Object.keys(toolProgress).length > 0;
+
   // Update sticky state on scroll events. Only RE-ENGAGES sticky when the
   // user actively scrolls down to the bottom; disengagement is handled by
   // the wheel/touch listeners above for immediate responsiveness.
@@ -123,8 +128,11 @@ export default function MessageList({
     if (atBottom && scrollingDown) {
       // Scrolling down (or programmatic) and near the bottom → re-engage
       stickyRef.current = true;
-    } else if (!atBottom && !autoScrollingRef.current) {
-      // Far from bottom and not in a programmatic animation → disengage
+    } else if (!atBottom && !autoScrollingRef.current && !isStreaming && !hasActiveToolProgress) {
+      // Far from bottom and not in a programmatic animation and not streaming
+      // and no tool progress → disengage. During streaming/tool execution, only
+      // wheel/touch listeners can disengage to avoid false disengagement when
+      // content expands (tool bubbles).
       stickyRef.current = false;
     }
 
@@ -142,15 +150,13 @@ export default function MessageList({
       clearTimeout(trimTimerRef.current);
       trimTimerRef.current = null;
     }
-  }, [onTrimOlder]);
+  }, [onTrimOlder, isStreaming, hasActiveToolProgress]);
 
   // Auto-scroll when messages change (new tokens, new messages).
-  // Also re-engage sticky when messages are appended (not prepended) so that
-  // sending a message always scrolls to the bottom even if stickyRef drifted.
+  // Only scroll if sticky is engaged - don't force scroll when user has
+  // scrolled away to read older messages.
   useEffect(() => {
-    const appended =
-      messages.length > prevMessageCountRef.current && !prependingRef.current;
-    if (stickyRef.current || appended) {
+    if (stickyRef.current) {
       // On initial load (first batch of messages), use instant scroll to
       // avoid racing with browser scroll restoration.
       if (prevMessageCountRef.current === 0 && messages.length > 0) {
@@ -159,9 +165,16 @@ export default function MessageList({
       } else {
         scrollToBottom();
       }
-      stickyRef.current = true;
     }
   }, [messages, scrollToBottom]);
+
+  // Auto-scroll when tool progress updates (separate effect to avoid
+  // interference with message count tracking)
+  useEffect(() => {
+    if (stickyRef.current && toolProgress && Object.keys(toolProgress).length > 0) {
+      scrollToBottom();
+    }
+  }, [toolProgress, scrollToBottom]);
 
   // ResizeObserver on the content container catches height changes that happen
   // AFTER the React render (tool-call bubble expansion, CSS transitions, lazy
@@ -245,6 +258,7 @@ export default function MessageList({
             debugEntries={debugByMessage[msg.id]}
             onApprove={() => onApproveToolCalls(msg.id)}
             onDeny={() => onDenyToolCalls(msg.id)}
+            toolProgress={toolProgress}
           />
         ))}
         {isCompacting && (

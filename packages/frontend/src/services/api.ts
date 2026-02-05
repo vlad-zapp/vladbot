@@ -150,6 +150,7 @@ export interface StreamCallbacks {
   onToken: (token: string) => void;
   onToolCall: (toolCall: ToolCall) => void;
   onToolResult?: (result: ToolResult) => void;
+  onToolProgress?: (data: { toolCallId: string; toolName: string; progress: number; total: number; message?: string }) => void;
   onDone: (hasToolCalls: boolean) => void;
   onError: (error: ClassifiedError) => void;
   onDebug?: (entry: DebugEntry) => void;
@@ -183,6 +184,9 @@ function dispatchStreamEvent(event: SSEEvent, callbacks: StreamCallbacks): void 
       break;
     case "tool_result":
       callbacks.onToolResult?.(event.data);
+      break;
+    case "tool_progress":
+      callbacks.onToolProgress?.(event.data);
       break;
     case "usage":
       callbacks.onUsage?.(event.data);

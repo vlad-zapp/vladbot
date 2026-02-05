@@ -32,6 +32,10 @@ const envSchema = z
     // VNC idle connection timeout in seconds. Connections are closed after
     // this period of inactivity. Default: 300 (5 minutes). Set to 0 to disable.
     VNC_CONNECTION_TIMEOUT: z.coerce.number().default(300),
+
+    // Browser automation (Patchright in Docker)
+    BROWSER_WS_ENDPOINT: z.string().optional().default("ws://localhost:3100"),
+    BROWSER_IDLE_TIMEOUT: z.coerce.number().default(300),
   })
   .refine(
     (data) => data.ANTHROPIC_API_KEY || data.GOOGLE_GEMINI_API_KEY || data.DEEPSEEK_API_KEY,

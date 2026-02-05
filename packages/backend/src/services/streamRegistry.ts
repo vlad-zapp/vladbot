@@ -53,7 +53,9 @@ export function getStream(sessionId: string): ActiveStream | undefined {
 
 export function pushEvent(sessionId: string, event: SSEEvent): void {
   const stream = streams.get(sessionId);
-  if (!stream) return;
+  if (!stream) {
+    return;
+  }
 
   // If stream was aborted, don't accumulate any more content
   if (stream.aborted && event.type === "token") {

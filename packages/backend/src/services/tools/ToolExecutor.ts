@@ -1,8 +1,22 @@
 import type { ToolDefinition, ToolCall, ToolResult } from "@vladbot/shared";
 
+export type ToolProgressCallback = (
+  toolCallId: string,
+  toolName: string,
+  progress: number,
+  total: number,
+  message?: string,
+) => void;
+
+export interface ToolExecuteContext {
+  sessionId?: string;
+  toolCallId?: string;
+  onProgress?: ToolProgressCallback;
+}
+
 export interface Tool {
   definition: ToolDefinition;
-  execute(args: Record<string, unknown>, sessionId?: string): Promise<string>;
+  execute(args: Record<string, unknown>, sessionId?: string, context?: ToolExecuteContext): Promise<string>;
   validate?(args: Record<string, unknown>): { valid: boolean; error?: string };
 }
 
@@ -65,6 +79,7 @@ export function validateToolCalls(calls: ToolCall[]): ToolResult[] {
 export async function executeToolCalls(
   calls: ToolCall[],
   sessionId?: string,
+  onProgress?: ToolProgressCallback,
 ): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
 
@@ -80,8 +95,13 @@ export async function executeToolCalls(
     }
 
     const args = { ...call.arguments, operation: resolved.operation };
+    const context: ToolExecuteContext = {
+      sessionId,
+      toolCallId: call.id,
+      onProgress,
+    };
     try {
-      const output = await resolved.tool.execute(args, sessionId);
+      const output = await resolved.tool.execute(args, sessionId, context);
       results.push({ toolCallId: call.id, output });
     } catch (err) {
       results.push({

@@ -46,9 +46,15 @@ interface MessageBubbleProps {
   debugEntries?: DebugEntry[];
   onApprove?: () => void;
   onDeny?: () => void;
+  toolProgress?: Record<string, { progress: number; total: number; message?: string }>;
 }
 
-function getToolStatus(
+/**
+ * Compute tool status locally (fallback for streaming/optimistic updates).
+ * Backend provides toolStatuses for persisted messages; this is only used
+ * when that data isn't available yet.
+ */
+function getToolStatusFallback(
   index: number,
   message: ChatMessage,
 ): ToolCallStatus {
@@ -59,6 +65,9 @@ function getToolStatus(
   const tc = message.toolCalls![index];
   const result = results.find((r) => r.toolCallId === tc.id);
   if (result) return "done";
+
+  // Cancelled by user (stream interrupted)
+  if (status === "cancelled") return "cancelled";
 
   // Not approved yet (and no results exist from a previous execution)
   if (status === "pending" && results.length === 0) return "pending";
@@ -78,6 +87,7 @@ export default function MessageBubble({
   debugEntries,
   onApprove,
   onDeny,
+  toolProgress,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
 
@@ -85,10 +95,12 @@ export default function MessageBubble({
   const [showLogs, setShowLogs] = useState(false);
 
   // Don't render tool-role messages directly (their results show in the assistant bubble)
-  if (message.role === "tool") return null;
+  // Use displayType from backend if available, otherwise check role
+  const displayType = message.displayType ?? (message.role === "compaction" ? "context_summary" : message.role);
+  if (displayType === "tool_result" || message.role === "tool") return null;
 
-  // Render compaction bubble
-  if (message.role === "compaction") {
+  // Render compaction/context_summary bubble
+  if (displayType === "context_summary" || message.role === "compaction") {
     return (
       <div className="message message-compaction">
         <div className="compaction-header">Context compacted</div>
@@ -163,13 +175,21 @@ export default function MessageBubble({
             const result = message.toolResults?.find(
               (r) => r.toolCallId === tc.id,
             );
-            const status = message.toolStatuses?.[tc.id] ?? getToolStatus(index, message);
+            // Prefer backend-computed toolStatuses; fall back to local computation for streaming
+            let status = message.toolStatuses?.[tc.id] ?? getToolStatusFallback(index, message);
+            // If we have progress data for this tool, it's definitely executing
+            // (handles race condition where tool_progress arrives before auto_approved event)
+            const tcProgress = toolProgress?.[tc.id];
+            if (tcProgress && status === "pending") {
+              status = "executing";
+            }
             return (
               <ToolCallBubble
                 key={tc.id}
                 toolCall={tc}
                 result={result}
                 status={status}
+                progress={tcProgress}
               />
             );
           })}

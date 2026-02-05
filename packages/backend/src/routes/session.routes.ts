@@ -17,7 +17,7 @@ import {
   atomicApprove,
 } from "../services/sessionStore.js";
 import { getSessionFilePath, saveSessionFile } from "../services/sessionFiles.js";
-import { compactSession } from "../services/compaction.js";
+import { performCompaction } from "../services/context/index.js";
 import { createStream, getStream } from "../services/streamRegistry.js";
 import { executeToolRound, denyToolRound } from "../services/toolLoop.js";
 import { getToolDefinitions } from "../services/tools/index.js";
@@ -254,13 +254,17 @@ router.post("/sessions/:id/compact", async (req, res) => {
   }
 
   try {
-    const result = await compactSession(
+    const result = await performCompaction(
       sessionId,
       modelInfo.id,
       modelInfo.provider,
       modelInfo.contextWindow,
     );
-    res.json(result);
+    res.json({
+      compactionMessage: result.compactionMessage,
+      summary: result.summary,
+      newTokenUsage: result.newTokenUsage,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Compaction failed";
     res.status(500).json({ error: message });

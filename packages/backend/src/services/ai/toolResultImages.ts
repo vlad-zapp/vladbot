@@ -104,16 +104,18 @@ export async function resolveImageToBase64(
 
 /**
  * Parse the vision model setting ("provider:model_id") into its parts.
- * If sessionId is provided, reads from the session first, then falls back to
- * global runtime settings. Returns null if not configured.
+ * If sessionId is provided, uses the session's visionModel exclusively —
+ * sessions are seeded with the global setting at creation, so an empty value
+ * means the user explicitly disabled vision for this session.
+ * Falls back to global runtime settings only when no sessionId is given.
  */
 async function parseVisionModel(sessionId?: string): Promise<{ provider: string; model: string } | null> {
   let raw: string | undefined;
   if (sessionId) {
     const sessionVision = await getSessionVisionModel(sessionId);
     if (sessionVision) raw = sessionVision;
-  }
-  if (!raw) {
+    // No fallback to global — session value is authoritative
+  } else {
     raw = await getRuntimeSetting("vision_model");
   }
   if (!raw) return null;

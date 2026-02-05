@@ -106,7 +106,7 @@ describe("session switching — streaming isolation", () => {
     expect(isStreaming).toBe(true);
 
     // Active stream metadata should be available for UI restoration
-    expect(streamState?.activeStream?.content).toBe("hello");
+    expect((streamState as StreamState | null)?.activeStream?.content).toBe("hello");
 
     resolve();
     await streamDone;

@@ -86,6 +86,26 @@ await pool.query(`
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
+
+  -- Context snapshots: pre-computed LLM context after compaction
+  CREATE TABLE IF NOT EXISTS context_snapshots (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    summary TEXT NOT NULL,
+    summary_token_count INTEGER NOT NULL,
+    verbatim_message_ids UUID[] NOT NULL,
+    verbatim_token_count INTEGER NOT NULL,
+    total_token_count INTEGER NOT NULL,
+    trigger_token_count INTEGER NOT NULL,
+    model_used TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_context_snapshots_session ON context_snapshots(session_id, created_at DESC);
+
+  -- Session columns for snapshot-based compaction
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS active_snapshot_id UUID REFERENCES context_snapshots(id);
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS current_token_count INTEGER NOT NULL DEFAULT 0;
 `);
 
 export default pool;

@@ -211,4 +211,47 @@ describe("streamRegistry", () => {
       expect(s2.generation).toBeGreaterThan(s1.generation);
     });
   });
+
+  describe("abort behavior", () => {
+    it("stream has an abort controller", () => {
+      const stream = createStream("test-session", "asst-1", "gpt-4");
+      expect(stream.abortController).toBeInstanceOf(AbortController);
+      expect(stream.abortController.signal.aborted).toBe(false);
+    });
+
+    it("abort controller can be triggered", () => {
+      const stream = createStream("test-session", "asst-1", "gpt-4");
+      stream.abortController.abort();
+      expect(stream.abortController.signal.aborted).toBe(true);
+    });
+
+    it("aborted flag is initially false", () => {
+      const stream = createStream("test-session", "asst-1", "gpt-4");
+      expect(stream.aborted).toBe(false);
+    });
+
+    it("aborted flag can be set", () => {
+      const stream = createStream("test-session", "asst-1", "gpt-4");
+      stream.aborted = true;
+      expect(stream.aborted).toBe(true);
+    });
+
+    it("does not accumulate tokens when aborted", () => {
+      const stream = createStream("test-session", "asst-1", "gpt-4");
+      pushEvent("test-session", { type: "token", data: "Hello" });
+      stream.aborted = true;
+      pushEvent("test-session", { type: "token", data: " World" });
+      // Tokens pushed after abort are NOT accumulated - protection against
+      // late-arriving tokens after user cancellation
+      expect(stream.content).toBe("Hello");
+    });
+
+    it("new stream has fresh abort controller", () => {
+      const s1 = createStream("test-session", "asst-1", "gpt-4");
+      s1.abortController.abort();
+      const s2 = createStream("test-session", "asst-2", "gpt-4");
+      expect(s2.abortController.signal.aborted).toBe(false);
+      expect(s2.aborted).toBe(false);
+    });
+  });
 });

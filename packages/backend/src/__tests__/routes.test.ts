@@ -86,7 +86,6 @@ const mockDenyToolRound = vi.fn().mockResolvedValue(undefined);
 vi.mock("../services/toolLoop.js", () => ({
   executeToolRound: (...args: unknown[]) => mockExecuteToolRound(...args),
   denyToolRound: (...args: unknown[]) => mockDenyToolRound(...args),
-  buildHistoryFromDB: vi.fn().mockReturnValue([]),
 }));
 
 // Mock settingsStore
@@ -99,10 +98,14 @@ vi.mock("../services/settingsStore.js", () => ({
   getCachedSettings: vi.fn().mockResolvedValue({}),
 }));
 
-// Mock compaction service
-const mockCompactSession = vi.fn();
-vi.mock("../services/compaction.js", () => ({
-  compactSession: (...args: unknown[]) => mockCompactSession(...args),
+// Mock ContextManager (all exports used by the app)
+const mockPerformCompaction = vi.fn();
+vi.mock("../services/context/index.js", () => ({
+  performCompaction: (...args: unknown[]) => mockPerformCompaction(...args),
+  getLLMContext: vi.fn().mockResolvedValue([]),
+  autoCompactIfNeeded: vi.fn().mockResolvedValue(null),
+  computeToolStatuses: vi.fn().mockReturnValue({}),
+  enrichMessageForDisplay: vi.fn((msg: unknown) => msg),
 }));
 
 const app = (await import("../app.js")).default;
@@ -496,9 +499,11 @@ describe("Session routes", () => {
         content: "Summary of conversation",
         timestamp: 999,
       };
-      mockCompactSession.mockResolvedValueOnce({
+      mockPerformCompaction.mockResolvedValueOnce({
+        snapshot: { id: "snap-1" },
         compactionMessage: compactionMsg,
         summary: "Summary of conversation",
+        newTokenUsage: { inputTokens: 100, outputTokens: 0 },
       });
 
       const res = await fetch(`${base}/sessions/s1/compact`, {
@@ -522,7 +527,7 @@ describe("Session routes", () => {
     });
 
     it("returns 500 when compaction fails", async () => {
-      mockCompactSession.mockRejectedValueOnce(new Error("Not enough messages to compact"));
+      mockPerformCompaction.mockRejectedValueOnce(new Error("Not enough messages to compact"));
 
       const res = await fetch(`${base}/sessions/s1/compact`, {
         method: "POST",
@@ -609,9 +614,20 @@ describe("Last active session routes", () => {
 });
 
 describe("Approve/Deny endpoints", () => {
+  beforeEach(() => {
+    // Reset mocks completely to avoid cross-test pollution
+    mockSessionStore.getSessionModel.mockReset();
+    mockSessionStore.getSession.mockReset();
+    mockSessionStore.atomicApprove.mockReset();
+    // Set default values after reset
+    mockSessionStore.getSessionModel.mockResolvedValue("deepseek:deepseek-chat");
+    mockSessionStore.getSession.mockResolvedValue(null);
+    mockSessionStore.atomicApprove.mockResolvedValue(false);
+  });
+
   describe("POST /api/sessions/:id/messages/:messageId/approve", () => {
     it("returns 202 for valid approval", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",
@@ -627,7 +643,7 @@ describe("Approve/Deny endpoints", () => {
           },
         ],
       });
-      mockSessionStore.atomicApprove.mockResolvedValueOnce(true);
+      mockSessionStore.atomicApprove.mockResolvedValue(true);
 
       const res = await fetch(`${base}/sessions/s1/messages/m1/approve`, {
         method: "POST",
@@ -640,7 +656,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 404 for missing session", async () => {
-      mockSessionStore.getSessionModel.mockResolvedValueOnce(null);
+      mockSessionStore.getSessionModel.mockResolvedValue(null);
 
       const res = await fetch(`${base}/sessions/nonexistent/messages/m1/approve`, {
         method: "POST",
@@ -651,7 +667,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 404 for missing message", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",
@@ -668,7 +684,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 409 for already approved message", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",
@@ -697,7 +713,7 @@ describe("Approve/Deny endpoints", () => {
       const { createStream: mockCreate, getStream: mockGet } = await import("../services/streamRegistry.js");
 
       // Simulate an existing done stream from the first LLM round
-      (mockGet as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+      (mockGet as ReturnType<typeof vi.fn>).mockReturnValue({
         sessionId: "s1",
         assistantId: "old-a1",
         content: "done content",
@@ -708,7 +724,7 @@ describe("Approve/Deny endpoints", () => {
         subscribers: new Set(),
       });
 
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",
@@ -724,7 +740,7 @@ describe("Approve/Deny endpoints", () => {
           },
         ],
       });
-      mockSessionStore.atomicApprove.mockResolvedValueOnce(true);
+      mockSessionStore.atomicApprove.mockResolvedValue(true);
 
       const res = await fetch(`${base}/sessions/s1/messages/m1/approve`, {
         method: "POST",
@@ -740,7 +756,7 @@ describe("Approve/Deny endpoints", () => {
 
   describe("POST /api/sessions/:id/messages/:messageId/deny", () => {
     it("returns 200 for valid denial", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",
@@ -766,8 +782,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 404 for missing session", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce(null);
-
+      // Default from beforeEach is null, no need to set again
       const res = await fetch(`${base}/sessions/nonexistent/messages/m1/deny`, {
         method: "POST",
       });
@@ -775,7 +790,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 404 for missing message", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",
@@ -790,7 +805,7 @@ describe("Approve/Deny endpoints", () => {
     });
 
     it("returns 409 for non-pending message", async () => {
-      mockSessionStore.getSession.mockResolvedValueOnce({
+      mockSessionStore.getSession.mockResolvedValue({
         id: "s1",
         title: "Chat",
         createdAt: "2025-01-01",

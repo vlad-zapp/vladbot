@@ -13,11 +13,11 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@google/genai": "^0.14.0",
     "@vladbot/shared": "*",
-    "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "glob": "^13.0.0",
+    "patchright": "^1.57.0",
     "pg": "^8.17.2",
     "rfb2": "^0.2.2",
     "sharp": "^0.34.5",
@@ -27,7 +27,6 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^18.19.130",

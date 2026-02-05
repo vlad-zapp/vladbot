@@ -24,6 +24,7 @@ interface ChatContainerProps {
   isLoadingOlder?: boolean;
   onLoadMore?: () => void;
   onTrimOlder?: () => void;
+  toolProgress?: Record<string, { progress: number; total: number; message?: string }>;
 }
 
 export default function ChatContainer({
@@ -47,6 +48,7 @@ export default function ChatContainer({
   isLoadingOlder,
   onLoadMore,
   onTrimOlder,
+  toolProgress,
 }: ChatContainerProps) {
   return (
     <div className="chat-container">
@@ -62,6 +64,7 @@ export default function ChatContainer({
         isLoadingOlder={isLoadingOlder}
         onLoadMore={onLoadMore}
         onTrimOlder={onTrimOlder}
+        toolProgress={toolProgress}
       />
       <ChatInput
         onSend={onSend}

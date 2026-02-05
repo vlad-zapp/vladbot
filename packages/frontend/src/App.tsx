@@ -98,6 +98,7 @@ export default function App() {
     loadOlderMessages,
     trimToLatestPage,
     cancelStream,
+    toolProgress,
   } = useChat(
     activeSessionId,
     createNewSession,
@@ -177,6 +178,7 @@ export default function App() {
               isLoadingOlder={isLoadingOlder}
               onLoadMore={loadOlderMessages}
               onTrimOlder={trimToLatestPage}
+              toolProgress={toolProgress}
             />
           )}
           {currentView === "memories" && <MemoryManager />}
