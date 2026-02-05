@@ -4,12 +4,36 @@ set -e
 # Create log directory
 mkdir -p /var/log/supervisor
 
-# Ensure PostgreSQL data directory has correct permissions
-chown -R postgres:postgres /var/lib/postgresql
-
 # Ensure data directories exist and have correct permissions
-mkdir -p /data/profile /data/files
-chown -R vladbot:vladbot /data
+mkdir -p /data/profile /data/files /data/postgres
+chown -R vladbot:vladbot /data/profile /data/files
+chown -R postgres:postgres /data/postgres
+
+# Initialize PostgreSQL if this is first run
+if [ ! -f /data/postgres/PG_VERSION ]; then
+    echo "Initializing PostgreSQL database..."
+
+    # Initialize the database cluster
+    su postgres -c "/usr/lib/postgresql/16/bin/initdb -D /data/postgres"
+
+    # Configure PostgreSQL
+    echo "host all all 127.0.0.1/32 md5" >> /data/postgres/pg_hba.conf
+    echo "listen_addresses = 'localhost'" >> /data/postgres/postgresql.conf
+
+    # Start PostgreSQL temporarily to create user and database
+    su postgres -c "/usr/lib/postgresql/16/bin/pg_ctl -D /data/postgres -l /tmp/pg_init.log start"
+    sleep 2
+
+    # Create user and database
+    su postgres -c "psql --command \"CREATE USER vladbot WITH PASSWORD 'vladbot';\""
+    su postgres -c "createdb -O vladbot vladbot"
+    su postgres -c "psql -d vladbot --command \"CREATE EXTENSION IF NOT EXISTS vector;\""
+
+    # Stop PostgreSQL (supervisor will start it)
+    su postgres -c "/usr/lib/postgresql/16/bin/pg_ctl -D /data/postgres stop"
+
+    echo "PostgreSQL initialized successfully"
+fi
 
 # Build API keys environment string for supervisor
 API_KEYS=""

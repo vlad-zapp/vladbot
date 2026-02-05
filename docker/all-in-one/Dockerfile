@@ -33,18 +33,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 # Create app user
 RUN useradd -m -s /bin/bash vladbot
 
-# PostgreSQL setup
-USER postgres
-RUN /etc/init.d/postgresql start && \
-    psql --command "CREATE USER vladbot WITH PASSWORD 'vladbot';" && \
-    createdb -O vladbot vladbot && \
-    psql -d vladbot --command "CREATE EXTENSION IF NOT EXISTS vector;" && \
-    /etc/init.d/postgresql stop
-USER root
-
-# Configure PostgreSQL to listen on localhost
-RUN echo "host all all 127.0.0.1/32 md5" >> /etc/postgresql/16/main/pg_hba.conf && \
-    echo "listen_addresses = 'localhost'" >> /etc/postgresql/16/main/postgresql.conf
+# PostgreSQL will be initialized at runtime in /data/postgres
+# Just create the config directory structure
+RUN mkdir -p /data/postgres && chown postgres:postgres /data/postgres
 
 # App directory
 WORKDIR /app
