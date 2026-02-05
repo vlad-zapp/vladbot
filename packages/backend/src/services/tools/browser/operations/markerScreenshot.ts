@@ -14,6 +14,7 @@ export async function takeMarkerScreenshot(
   const page = await getBrowserPage();
 
   // Inject marker element with fixed positioning (viewport coordinates)
+  // Uses DOM APIs instead of innerHTML to work with Trusted Types CSP (e.g., Google login pages)
   const markerId = `_marker_${Date.now()}`;
   await page.evaluate(
     ({ id, x, y }) => {
@@ -28,13 +29,43 @@ export async function takeMarkerScreenshot(
         pointer-events: none;
         z-index: 2147483647;
       `;
-      marker.innerHTML = `
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <line x1="12" y1="0" x2="12" y2="24" stroke="red" stroke-width="3"/>
-          <line x1="0" y1="12" x2="24" y2="12" stroke="red" stroke-width="3"/>
-          <circle cx="12" cy="12" r="8" stroke="red" stroke-width="2" fill="none"/>
-        </svg>
-      `;
+
+      // Create SVG using DOM APIs (avoids innerHTML for Trusted Types compatibility)
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("width", "24");
+      svg.setAttribute("height", "24");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+
+      const line1 = document.createElementNS(svgNS, "line");
+      line1.setAttribute("x1", "12");
+      line1.setAttribute("y1", "0");
+      line1.setAttribute("x2", "12");
+      line1.setAttribute("y2", "24");
+      line1.setAttribute("stroke", "red");
+      line1.setAttribute("stroke-width", "3");
+
+      const line2 = document.createElementNS(svgNS, "line");
+      line2.setAttribute("x1", "0");
+      line2.setAttribute("y1", "12");
+      line2.setAttribute("x2", "24");
+      line2.setAttribute("y2", "12");
+      line2.setAttribute("stroke", "red");
+      line2.setAttribute("stroke-width", "3");
+
+      const circle = document.createElementNS(svgNS, "circle");
+      circle.setAttribute("cx", "12");
+      circle.setAttribute("cy", "12");
+      circle.setAttribute("r", "8");
+      circle.setAttribute("stroke", "red");
+      circle.setAttribute("stroke-width", "2");
+      circle.setAttribute("fill", "none");
+
+      svg.appendChild(line1);
+      svg.appendChild(line2);
+      svg.appendChild(circle);
+      marker.appendChild(svg);
       document.body.appendChild(marker);
     },
     { id: markerId, x, y },
