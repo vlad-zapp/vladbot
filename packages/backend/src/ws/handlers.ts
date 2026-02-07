@@ -443,6 +443,12 @@ registerHandler("messages.approve", async (payload, ctx) => {
     tools,
   ).catch((err) => {
     console.error("Tool execution failed:", err);
+    const classified = classifyLLMError(
+      err instanceof Error ? err : new Error("Unknown error"),
+    );
+    pushEvent(sessionId, { type: "error", data: classified });
+    pushEvent(sessionId, { type: "done", data: { hasToolCalls: false } });
+    scheduleRemoval(sessionId);
   });
 
   return {};
@@ -940,6 +946,12 @@ registerHandler("chat.stream", async (payload, ctx) => {
               0,
             ).catch((err) => {
               console.error("Auto-approve tool execution failed:", err);
+              const classified = classifyLLMError(
+                err instanceof Error ? err : new Error("Unknown error"),
+              );
+              pushEvent(sessionId, { type: "error", data: classified });
+              pushEvent(sessionId, { type: "done", data: { hasToolCalls: false } });
+              scheduleRemoval(sessionId);
             });
             return; // Don't push done — tool loop continues the stream
           }

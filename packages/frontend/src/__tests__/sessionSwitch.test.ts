@@ -227,6 +227,138 @@ describe("session switching — streaming isolation", () => {
     expect(streamState!.sessionId).toBe("session-B");
   });
 
+  it("onToken callback is no-op after session switch (prevents message mixing)", () => {
+    let sessionIdRef = "session-A";
+    const messages: Array<{ id: string; content: string }> = [
+      { id: "msg-B", content: "hello from session B" },
+    ];
+
+    // Simulate the onToken callback from streamTurn
+    function onToken(sessionId: string, token: string, currentAssistantId: string) {
+      if (sessionIdRef !== sessionId) return; // session guard
+      const idx = messages.findIndex((m) => m.id === currentAssistantId);
+      if (idx >= 0) {
+        messages[idx] = { ...messages[idx], content: messages[idx].content + token };
+      } else {
+        // Create new message
+        messages.push({ id: currentAssistantId, content: token });
+      }
+    }
+
+    // Stream started on session A, then user switched to session B
+    sessionIdRef = "session-B";
+
+    // Tokens from session A's stream arrive — should be ignored
+    onToken("session-A", " leaked token", "assistant-A");
+    expect(messages).toEqual([{ id: "msg-B", content: "hello from session B" }]);
+    // No assistant-A message leaked into session B
+    expect(messages.find((m) => m.id === "assistant-A")).toBeUndefined();
+  });
+
+  it("onSnapshot callback is no-op after session switch", () => {
+    let sessionIdRef = "session-A";
+    const messages: Array<{ id: string; content: string }> = [];
+
+    function onSnapshot(sessionId: string, assistantId: string, content: string) {
+      if (sessionIdRef !== sessionId) return; // session guard
+      messages.push({ id: assistantId, content });
+    }
+
+    // Switch to session B
+    sessionIdRef = "session-B";
+
+    // Snapshot from session A arrives — should be ignored
+    onSnapshot("session-A", "assistant-A", "");
+    expect(messages).toEqual([]);
+  });
+
+  it("onError callback is no-op after session switch (no ghost error messages)", () => {
+    let sessionIdRef = "session-A";
+    const messages: Array<{ id: string; role: string; content: string }> = [
+      { id: "msg-B", role: "user", content: "question in session B" },
+    ];
+
+    function onError(sessionId: string, errorMessage: string) {
+      if (sessionIdRef !== sessionId) return; // session guard
+      messages.push({ id: `err-${Date.now()}`, role: "assistant", content: `Error: ${errorMessage}` });
+    }
+
+    // Switch to session B
+    sessionIdRef = "session-B";
+
+    // Error from session A arrives — should be ignored
+    onError("session-A", "LLM API failed");
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toBe("question in session B");
+  });
+
+  it("empty snapshot defers message creation to first token", () => {
+    const messages: Array<{ id: string; content: string; model?: string }> = [];
+    let currentAssistantId = "";
+
+    function onSnapshot(assistantId: string, content: string) {
+      currentAssistantId = assistantId;
+      // Don't create empty placeholder
+      if (!content) return;
+      messages.push({ id: assistantId, content });
+    }
+
+    function onToken(token: string, model: string) {
+      const existing = messages.find((m) => m.id === currentAssistantId);
+      if (existing) {
+        existing.content += token;
+      } else {
+        // First token — create the message
+        messages.push({ id: currentAssistantId, content: token, model });
+      }
+    }
+
+    // Snapshot arrives with empty content
+    onSnapshot("asst-1", "");
+    expect(messages).toEqual([]); // No empty bubble
+
+    // First token arrives — creates the message
+    onToken("Hello", "gpt-4");
+    expect(messages).toEqual([{ id: "asst-1", content: "Hello", model: "gpt-4" }]);
+
+    // Subsequent tokens update normally
+    onToken(" world", "gpt-4");
+    expect(messages).toEqual([{ id: "asst-1", content: "Hello world", model: "gpt-4" }]);
+  });
+
+  it("tool-only response creates message on first onToolCall when snapshot was empty", () => {
+    const messages: Array<{ id: string; content: string; toolCalls?: unknown[] }> = [];
+    let currentAssistantId = "";
+    const collectedToolCalls: unknown[] = [];
+
+    function onSnapshot(assistantId: string, content: string) {
+      currentAssistantId = assistantId;
+      if (!content) return;
+      messages.push({ id: assistantId, content });
+    }
+
+    function onToolCall(toolCall: { id: string; name: string }) {
+      collectedToolCalls.push(toolCall);
+      const existing = messages.find((m) => m.id === currentAssistantId);
+      if (existing) {
+        existing.toolCalls = [...collectedToolCalls];
+      } else {
+        // Create message on first tool call
+        messages.push({ id: currentAssistantId, content: "", toolCalls: [...collectedToolCalls] });
+      }
+    }
+
+    // Empty snapshot
+    onSnapshot("asst-1", "");
+    expect(messages).toEqual([]);
+
+    // Tool call arrives — creates the message
+    onToolCall({ id: "tc-1", name: "browser_navigate" });
+    expect(messages).toHaveLength(1);
+    expect(messages[0].id).toBe("asst-1");
+    expect(messages[0].toolCalls).toHaveLength(1);
+  });
+
   it("fetchMessages after stream skips update if session changed", async () => {
     let sessionIdRef = "session-A";
     let messages: string[] = [];

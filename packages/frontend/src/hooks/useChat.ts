@@ -159,10 +159,12 @@ export function useChat(
   const subscribeStreamCallbacks = useCallback(
     (sid: string, staleCheck: () => boolean) => {
       let assistantId = "";
+      let assistantModel = "";
       return {
         onSnapshot: (snap: { assistantId: string; content: string; model: string; toolCalls: ToolCall[] }) => {
           if (staleCheck()) return;
           assistantId = snap.assistantId;
+          assistantModel = snap.model;
           setMessages((prev) => {
             const existing = prev.find((m) => m.id === snap.assistantId);
             if (existing) {
@@ -179,6 +181,8 @@ export function useChat(
                   : m,
               );
             }
+            // Don't create empty placeholder — onToken/onToolCall will create on first data
+            if (!snap.content && snap.toolCalls.length === 0) return prev;
             return [
               ...prev,
               {
@@ -195,23 +199,63 @@ export function useChat(
         },
         onToken: (token: string) => {
           if (staleCheck()) return;
-          setMessages((prev) =>
-            prev.map((m, i) =>
+          setMessages((prev) => {
+            if (assistantId && prev.some((m) => m.id === assistantId)) {
+              return prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, content: m.content + token }
+                  : m,
+              );
+            }
+            if (assistantId && !prev.some((m) => m.id === assistantId)) {
+              // First token — create the assistant message (snapshot deferred creation)
+              return [
+                ...prev,
+                {
+                  id: assistantId,
+                  role: "assistant" as const,
+                  content: token,
+                  model: assistantModel,
+                  timestamp: Date.now(),
+                },
+              ];
+            }
+            return prev.map((m, i) =>
               i === prev.length - 1 && m.role === "assistant"
                 ? { ...m, content: m.content + token }
                 : m,
-            ),
-          );
+            );
+          });
         },
         onToolCall: (toolCall: ToolCall) => {
           if (staleCheck()) return;
-          setMessages((prev) =>
-            prev.map((m, i) =>
+          setMessages((prev) => {
+            if (assistantId && prev.some((m) => m.id === assistantId)) {
+              return prev.map((m) =>
+                m.id === assistantId
+                  ? { ...m, toolCalls: [...(m.toolCalls ?? []), toolCall] }
+                  : m,
+              );
+            }
+            if (assistantId && !prev.some((m) => m.id === assistantId)) {
+              return [
+                ...prev,
+                {
+                  id: assistantId,
+                  role: "assistant" as const,
+                  content: "",
+                  model: assistantModel,
+                  timestamp: Date.now(),
+                  toolCalls: [toolCall],
+                },
+              ];
+            }
+            return prev.map((m, i) =>
               i === prev.length - 1 && m.role === "assistant"
                 ? { ...m, toolCalls: [...(m.toolCalls ?? []), toolCall] }
                 : m,
-            ),
-          );
+            );
+          });
         },
         onToolResult: (result: ToolResult) => {
           if (staleCheck()) return;
@@ -365,6 +409,12 @@ export function useChat(
     // Stream events (token, done, etc.) are only handled here for CROSS-CLIENT
     // streams. When a local stream is active, streamChat has its own push
     // listener that handles these events via streamTurn callbacks.
+    // Track the current assistant message ID for cross-client/auto-approve
+    // streams so token/tool_call handlers can create the message on first data
+    // (snapshot defers creation when content is empty to avoid empty bubbles).
+    let pushAssistantId = "";
+    let pushAssistantModel = "";
+
     unsubPush = wsClient.onPush(sid, (event: SSEEvent) => {
       if (stale) return;
 
@@ -417,6 +467,8 @@ export function useChat(
       switch (event.type) {
         case "snapshot": {
           const snap = event.data as { assistantId: string; content: string; model: string; toolCalls: ToolCall[] };
+          pushAssistantId = snap.assistantId;
+          pushAssistantModel = snap.model;
           setMessages((prev) => {
             const existing = prev.find((m) => m.id === snap.assistantId);
             if (existing) {
@@ -427,6 +479,8 @@ export function useChat(
                   : m,
               );
             }
+            // Don't create empty placeholder — token/tool_call will create on first data
+            if (!snap.content && snap.toolCalls.length === 0) return prev;
             return [
               ...prev,
               {
@@ -443,22 +497,65 @@ export function useChat(
           break;
         }
         case "token":
-          setMessages((prev) =>
-            prev.map((m, i) =>
+          setMessages((prev) => {
+            if (pushAssistantId && prev.some((m) => m.id === pushAssistantId)) {
+              return prev.map((m) =>
+                m.id === pushAssistantId
+                  ? { ...m, content: m.content + event.data }
+                  : m,
+              );
+            }
+            if (pushAssistantId && !prev.some((m) => m.id === pushAssistantId)) {
+              // First token — create the assistant message (snapshot deferred creation)
+              return [
+                ...prev,
+                {
+                  id: pushAssistantId,
+                  role: "assistant" as const,
+                  content: event.data as string,
+                  model: pushAssistantModel,
+                  timestamp: Date.now(),
+                },
+              ];
+            }
+            // Fallback: update last assistant message
+            return prev.map((m, i) =>
               i === prev.length - 1 && m.role === "assistant"
                 ? { ...m, content: m.content + event.data }
                 : m,
-            ),
-          );
+            );
+          });
           break;
         case "tool_call":
-          setMessages((prev) =>
-            prev.map((m, i) =>
+          setMessages((prev) => {
+            if (pushAssistantId && prev.some((m) => m.id === pushAssistantId)) {
+              return prev.map((m) =>
+                m.id === pushAssistantId
+                  ? { ...m, toolCalls: [...(m.toolCalls ?? []), event.data] }
+                  : m,
+              );
+            }
+            if (pushAssistantId && !prev.some((m) => m.id === pushAssistantId)) {
+              // First data is a tool call — create the assistant message
+              return [
+                ...prev,
+                {
+                  id: pushAssistantId,
+                  role: "assistant" as const,
+                  content: "",
+                  model: pushAssistantModel,
+                  timestamp: Date.now(),
+                  toolCalls: [event.data],
+                },
+              ];
+            }
+            // Fallback: update last assistant message
+            return prev.map((m, i) =>
               i === prev.length - 1 && m.role === "assistant"
                 ? { ...m, toolCalls: [...(m.toolCalls ?? []), event.data] }
                 : m,
-            ),
-          );
+            );
+          });
           break;
         case "tool_result":
           setMessages((prev) =>
@@ -623,6 +720,7 @@ export function useChat(
         {
           onSnapshot: (snap: SnapshotData) => {
             if (streamStateRef.current?.aborted) return;
+            if (sessionIdRef.current !== sessionId) return;
             // New round started — create/update the new assistant message
             currentAssistantId = snap.assistantId;
             fullContent = snap.content;
@@ -631,6 +729,7 @@ export function useChat(
             if (as) {
               as.assistantId = snap.assistantId;
               as.content = snap.content;
+              as.model = snap.model;
               as.toolCalls = [];
             }
             setMessages((prev) => {
@@ -645,6 +744,8 @@ export function useChat(
                     : m,
                 );
               }
+              // Don't create empty placeholder — onToken/onToolCall will create on first data
+              if (!snap.content && snap.toolCalls.length === 0) return prev;
               return [
                 ...prev,
                 {
@@ -660,39 +761,66 @@ export function useChat(
           },
           onToken: (token) => {
             if (streamStateRef.current?.aborted) return;
+            if (sessionIdRef.current !== sessionId) return;
             fullContent += token;
             const as = streamStateRef.current?.activeStream;
             if (as?.assistantId === currentAssistantId) {
               as.content = fullContent;
             }
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentAssistantId
-                  ? { ...m, content: fullContent }
-                  : m,
-              ),
-            );
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === currentAssistantId)) {
+                return prev.map((m) =>
+                  m.id === currentAssistantId
+                    ? { ...m, content: fullContent }
+                    : m,
+                );
+              }
+              // First token — create the assistant message (snapshot deferred creation)
+              return [
+                ...prev,
+                {
+                  id: currentAssistantId,
+                  role: "assistant" as const,
+                  content: fullContent,
+                  model: streamStateRef.current?.activeStream?.model ?? "",
+                  timestamp: Date.now(),
+                },
+              ];
+            });
           },
           onToolCall: (toolCall) => {
             if (streamStateRef.current?.aborted) return;
+            if (sessionIdRef.current !== sessionId) return;
             collectedToolCalls.push(toolCall);
             const as = streamStateRef.current?.activeStream;
             if (as?.assistantId === currentAssistantId) {
               as.toolCalls = [...collectedToolCalls];
             }
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentAssistantId
-                  ? {
-                      ...m,
-                      toolCalls: [...collectedToolCalls],
-                    }
-                  : m,
-              ),
-            );
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === currentAssistantId)) {
+                return prev.map((m) =>
+                  m.id === currentAssistantId
+                    ? { ...m, toolCalls: [...collectedToolCalls] }
+                    : m,
+                );
+              }
+              // First data is a tool call — create the assistant message
+              return [
+                ...prev,
+                {
+                  id: currentAssistantId,
+                  role: "assistant" as const,
+                  content: "",
+                  model: streamStateRef.current?.activeStream?.model ?? "",
+                  timestamp: Date.now(),
+                  toolCalls: [...collectedToolCalls],
+                },
+              ];
+            });
           },
           onToolResult: (result) => {
             if (streamStateRef.current?.aborted) return;
+            if (sessionIdRef.current !== sessionId) return;
             setMessages((prev) =>
               prev.map((m) => {
                 if (m.role !== "assistant" || !m.toolCalls?.some((tc) => tc.id === result.toolCallId)) return m;
@@ -707,6 +835,7 @@ export function useChat(
           },
           onToolProgress: (data) => {
             if (streamStateRef.current?.aborted) return;
+            if (sessionIdRef.current !== sessionId) return;
             setToolProgress((prev) => ({
               ...prev,
               [data.toolCallId]: { progress: data.progress, total: data.total, message: data.message },
@@ -714,6 +843,7 @@ export function useChat(
           },
           onAutoApproved: (messageId) => {
             if (streamStateRef.current?.aborted) return;
+            if (sessionIdRef.current !== sessionId) return;
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === messageId
@@ -723,6 +853,7 @@ export function useChat(
             );
           },
           onDone: (htc) => {
+            if (sessionIdRef.current !== sessionId) return;
             hasToolCalls = htc;
             if (htc) {
               setMessages((prev) =>
@@ -735,6 +866,7 @@ export function useChat(
             }
           },
           onError: (error) => {
+            if (sessionIdRef.current !== sessionId) return;
             setMessages((prev) => {
               // If we have an assistant message for this stream, update it
               if (currentAssistantId && prev.some((m) => m.id === currentAssistantId)) {
@@ -757,6 +889,7 @@ export function useChat(
             });
           },
           onDebug: (entry) => {
+            if (sessionIdRef.current !== sessionId) return;
             const taggedEntry = {
               ...entry,
               messageId: userMsgId ?? currentAssistantId,
@@ -764,6 +897,7 @@ export function useChat(
             setDebugLog((prev) => [...prev, taggedEntry]);
           },
           onUsage: (usage) => {
+            if (sessionIdRef.current !== sessionId) return;
             setTokenUsage(usage);
             if (sessionId) {
               tokenUsageCacheRef.current.set(sessionId, usage);
@@ -1053,8 +1187,11 @@ export function useChat(
     const sessionId = activeSessionId ?? sessionIdRef.current;
     if (!sessionId) return;
 
-    // Immediately update UI to show cancellation
-    setIsStreaming(false);
+    // Set aborted SYNCHRONOUSLY so streamTurn callbacks ignore further events.
+    // Do NOT set isStreaming(false) or null streamStateRef here — sendMessage's
+    // finally block handles both when streamChat resolves after receiving the
+    // backend's done event.
+    streamStateRef.current.aborted = true;
 
     // Clear all tool progress immediately
     setToolProgress({});
@@ -1063,25 +1200,17 @@ export function useChat(
     setMessages((prev) =>
       prev.map((m) => {
         if (m.role !== "assistant" || !m.toolCalls?.length) return m;
-        // Check if this message has any tools still in progress
         const hasExecutingTools = m.toolCalls.some((tc) => {
           const result = m.toolResults?.find((r) => r.toolCallId === tc.id);
-          return !result; // No result = still in progress
+          return !result;
         });
         if (!hasExecutingTools) return m;
-        // Mark as cancelled so tool bubbles show "Cancelled by user"
         return { ...m, approvalStatus: "cancelled" as const };
       }),
     );
 
     // Tell backend to stop execution
     wsClient.request("messages.interrupt", { sessionId })
-      .then(() => {
-        if (streamStateRef.current?.sessionId === sessionId) {
-          streamStateRef.current.aborted = true;
-          streamStateRef.current = null;
-        }
-      })
       .catch(console.error);
   }, [activeSessionId]);
 

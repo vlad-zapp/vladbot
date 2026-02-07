@@ -95,7 +95,7 @@
       }
       statusEl.textContent = sessions.length + " active session" + (sessions.length !== 1 ? "s" : "");
       sessionsEl.innerHTML = sessions.map(function(s) {
-        var vncUrl = "/vnc/vnc.html?autoconnect=true&resize=scale&path=vnc/websockify&token=" + encodeURIComponent(s.id);
+        var vncUrl = "/vnc/vnc.html?autoconnect=true&resize=scale#path=vnc/websockify?token=" + s.id;
         return '<a class="session" href="' + vncUrl + '" target="_blank">' +
           '<div class="session-title">' + escapeHtml(s.title) + '</div>' +
           '<div class="session-id">' + escapeHtml(s.id) + '</div>' +

@@ -2,6 +2,7 @@ import { chromium } from "patchright";
 import type { Browser, BrowserContext, CDPSession, Page } from "patchright";
 import { spawn, type ChildProcess } from "child_process";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
+import { userInfo } from "os";
 import { env } from "../../../config/env.js";
 import type { ElementRef } from "./types.js";
 
@@ -183,12 +184,24 @@ class BrowserSessionManager {
       "-screen", "0", "1920x1080x24",
       "-ac",
     ], {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
       detached: false,
     });
 
     xvfbProcess.on("error", (err) => {
       console.error(`[BrowserSession] Xvfb error for session ${sessionId}:`, err);
+    });
+
+    // Log Xvfb stderr for debugging
+    if (xvfbProcess.stderr) {
+      xvfbProcess.stderr.on("data", (data: Buffer) => {
+        const msg = data.toString().trim();
+        if (msg) console.log(`[BrowserSession] Xvfb stderr (display :${displayNum}): ${msg}`);
+      });
+    }
+
+    xvfbProcess.on("exit", (code, signal) => {
+      console.log(`[BrowserSession] Xvfb exited for display :${displayNum} (code=${code}, signal=${signal})`);
     });
 
     try {
@@ -199,8 +212,11 @@ class BrowserSessionManager {
       const browser = await chromium.launch({
         headless: false,
         channel: "chrome",
-        env: { ...process.env, DISPLAY: `:${displayNum}` },
+        env: { ...process.env, DISPLAY: `:${displayNum}`, HOME: userInfo().homedir },
         args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-gpu",
           "--no-first-run",
           "--no-default-browser-check",
           "--disable-background-timer-throttling",
@@ -219,13 +235,25 @@ class BrowserSessionManager {
         "-shared",
         "-rfbport", String(vncPort),
         "-nopw",
+        "-noxdamage",
       ], {
-        stdio: "ignore",
+        stdio: ["ignore", "ignore", "pipe"],
         detached: false,
       });
 
       x11vncProcess.on("error", (err) => {
         console.error(`[BrowserSession] x11vnc error for session ${sessionId}:`, err);
+      });
+
+      if (x11vncProcess.stderr) {
+        x11vncProcess.stderr.on("data", (data: Buffer) => {
+          const msg = data.toString().trim();
+          if (msg) console.log(`[BrowserSession] x11vnc stderr (display :${displayNum}): ${msg}`);
+        });
+      }
+
+      x11vncProcess.on("exit", (code, signal) => {
+        console.log(`[BrowserSession] x11vnc exited for display :${displayNum} (code=${code}, signal=${signal})`);
       });
 
       // 5. Write websockify token file (format: "token: host:port")

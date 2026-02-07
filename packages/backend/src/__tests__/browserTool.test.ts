@@ -1164,6 +1164,29 @@ describe("connection manager", () => {
     expect(mockChromium.launch).toHaveBeenCalled();
   });
 
+  it("launches Chrome with --no-sandbox for Docker/root environments", async () => {
+    await getBrowserPage(SID);
+    expect(mockChromium.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: expect.arrayContaining(["--no-sandbox"]),
+      }),
+    );
+  });
+
+  it("passes correct HOME in env so Chrome can write to user home dir", async () => {
+    await getBrowserPage(SID);
+    expect(mockChromium.launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          HOME: expect.any(String),
+        }),
+      }),
+    );
+    // HOME should not be /root (which causes Chrome to crash when running as non-root)
+    const launchCall = mockChromium.launch.mock.calls[0][0];
+    expect(launchCall.env.HOME).not.toBe("/root");
+  });
+
   it("isBrowserConnected returns true after session creation", async () => {
     await getBrowserPage(SID);
     expect(isBrowserConnected(SID)).toBe(true);

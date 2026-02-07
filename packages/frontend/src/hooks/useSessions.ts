@@ -39,10 +39,15 @@ export function useSessions() {
           });
           break;
         case "session_deleted":
-          setSessions((prev) => prev.filter((s) => s.id !== event.data.id));
-          setActiveSessionId((current) => {
-            if (current !== event.data.id) return current;
-            return null; // Will be resolved by the component or next render
+          setSessions((prev) => {
+            const remaining = prev.filter((s) => s.id !== event.data.id);
+            setActiveSessionId((current) => {
+              if (current !== event.data.id) return current;
+              const nextId = remaining.length > 0 ? remaining[0].id : null;
+              if (nextId) saveLastActiveSession(nextId).catch(console.error);
+              return nextId;
+            });
+            return remaining;
           });
           break;
         case "session_updated":
