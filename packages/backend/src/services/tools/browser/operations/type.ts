@@ -15,7 +15,7 @@ export async function typeText(args: Record<string, unknown>, sessionId?: string
   const elementIndex = args.element as number | undefined;
   const clearFirst = (args.clear_first as boolean) ?? true;
 
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
   let elementRole: string | undefined;
   let elementName: string | undefined;
 
@@ -23,18 +23,18 @@ export async function typeText(args: Record<string, unknown>, sessionId?: string
 
   // Focus the target element by clicking it
   if (elementIndex !== undefined) {
-    const el = resolveElement(elementIndex);
+    const el = resolveElement(sessionId!, elementIndex);
     elementRole = el.role;
     elementName = el.name;
 
     // Scroll element into view with human-like behavior
-    const coords = await scrollElementIntoView(el.backendDOMNodeId);
+    const coords = await scrollElementIntoView(el.backendDOMNodeId, sessionId);
     if (!coords) {
       throw new StaleElementError(elementIndex);
     }
 
     // Verify element still exists right before clicking (minimizes time gap)
-    const exists = await verifyElementExists(el.backendDOMNodeId);
+    const exists = await verifyElementExists(sessionId!, el.backendDOMNodeId);
     if (!exists) {
       throw new StaleElementError(elementIndex);
     }

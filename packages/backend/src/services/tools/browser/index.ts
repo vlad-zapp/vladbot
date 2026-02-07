@@ -197,9 +197,9 @@ Operations:
 
     switch (op) {
       case "connect":
-        return connect(args);
+        return connect(args, sessionId);
       case "disconnect":
-        return disconnect();
+        return disconnect(sessionId);
       case "navigate":
         return navigate(args, sessionId);
       case "screenshot":
@@ -209,11 +209,11 @@ Operations:
       case "type":
         return typeText(args, sessionId);
       case "press":
-        return pressKey(args);
+        return pressKey(args, sessionId);
       case "scroll":
-        return scroll(args);
+        return scroll(args, sessionId);
       case "execute_js":
-        return executeJs(args);
+        return executeJs(args, sessionId);
 
       // Sub-LLM powered operations
       case "describe": {
@@ -266,9 +266,10 @@ Operations:
   },
 };
 
-async function connect(args: Record<string, unknown>): Promise<string> {
+async function connect(args: Record<string, unknown>, sessionId?: string): Promise<string> {
+  if (!sessionId) throw new Error("Session ID required for browser_connect");
   const address = args.address as string | undefined;
-  const page = await reconnectBrowser(address);
+  const page = await reconnectBrowser(sessionId, address);
 
   const result: BrowserConnectResult = {
     type: "browser_connect",
@@ -280,9 +281,10 @@ async function connect(args: Record<string, unknown>): Promise<string> {
   return JSON.stringify(result);
 }
 
-function disconnect(): string {
-  const wasConnected = isBrowserConnected();
-  disconnectBrowser();
+function disconnect(sessionId?: string): string {
+  if (!sessionId) throw new Error("Session ID required for browser_disconnect");
+  const wasConnected = isBrowserConnected(sessionId);
+  disconnectBrowser(sessionId);
 
   const result: BrowserDisconnectResult = {
     type: "browser_disconnect",

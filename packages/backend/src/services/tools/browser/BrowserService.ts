@@ -320,7 +320,7 @@ export class BrowserService {
    */
   async navigate(url: string, waitUntil?: string): Promise<string> {
     this.clearFindAllCache();
-    return navigate({ url, wait_until: waitUntil });
+    return navigate({ url, wait_until: waitUntil }, this.sessionId);
   }
 
   /**
@@ -328,7 +328,7 @@ export class BrowserService {
    * Passthrough to low-level operation.
    */
   async click(elementId: number): Promise<string> {
-    return click({ element: elementId });
+    return click({ element: elementId }, this.sessionId);
   }
 
   /**
@@ -336,7 +336,7 @@ export class BrowserService {
    * Passthrough to low-level operation.
    */
   async type(text: string, elementId?: number, clearFirst?: boolean): Promise<string> {
-    return typeText({ text, element: elementId, clear_first: clearFirst });
+    return typeText({ text, element: elementId, clear_first: clearFirst }, this.sessionId);
   }
 
   /**
@@ -344,7 +344,7 @@ export class BrowserService {
    * Passthrough to low-level operation.
    */
   async pressKey(key: string): Promise<string> {
-    return pressKey({ key });
+    return pressKey({ key }, this.sessionId);
   }
 
   /**
@@ -352,7 +352,7 @@ export class BrowserService {
    * Passthrough to low-level operation.
    */
   async scroll(direction?: string, amount?: string, toElement?: number): Promise<string> {
-    return scroll({ direction, amount, to_element: toElement });
+    return scroll({ direction, amount, to_element: toElement }, this.sessionId);
   }
 
   /**
@@ -374,7 +374,7 @@ export class BrowserService {
     const contextWindow = modelInfo?.contextWindow ?? 65_536; // fallback to 64K
     const maxChars = Math.floor(contextWindow * 0.8 * 4);
 
-    const resultJson = await getContent({ mode: "tree", offset, max_chars: maxChars });
+    const resultJson = await getContent({ mode: "tree", offset, max_chars: maxChars }, this.sessionId);
     const result = JSON.parse(resultJson) as {
       content: string;
       has_more?: boolean;
@@ -405,6 +405,17 @@ export function getBrowserService(options: BrowserServiceOptions): BrowserServic
     serviceCache.set(key, service);
   }
   return service;
+}
+
+/**
+ * Clean up BrowserService cache entries for a session.
+ */
+export function cleanupBrowserServiceCache(sessionId: string): void {
+  for (const [key] of serviceCache) {
+    if (key.startsWith(`${sessionId}-`)) {
+      serviceCache.delete(key);
+    }
+  }
 }
 
 /**

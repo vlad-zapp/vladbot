@@ -101,9 +101,10 @@ function randomScrollAmount(): number {
  */
 export async function scrollElementIntoView(
   backendNodeId: number,
+  sessionId?: string,
 ): Promise<{ x: number; y: number } | null> {
-  const page = await getBrowserPage();
-  const cdp = await getCDPSession();
+  const page = await getBrowserPage(sessionId!);
+  const cdp = await getCDPSession(sessionId!);
   const viewportHeight = await page.evaluate(() => window.innerHeight);
 
   // First check if element is already visible - no scrolling needed

@@ -33,6 +33,9 @@ import { getSetting, putSettings } from "../services/settingsStore.js";
 import { getAllRuntimeSettings } from "../config/runtimeSettings.js";
 import { getProvider } from "../services/ai/ProviderFactory.js";
 import { classifyLLMError } from "../services/ai/errorClassifier.js";
+import { cleanupBrowserSession, getActiveBrowserSessions } from "../services/tools/browser/connection.js";
+import { cleanupBrowserServiceCache } from "../services/tools/browser/BrowserService.js";
+import { clearLatestImage } from "../services/ai/toolResultImages.js";
 import {
   getLLMContext,
   performCompaction,
@@ -189,6 +192,14 @@ registerHandler("sessions.delete", async (payload, ctx) => {
   if (!parsed.success) throw new WsError(400, JSON.stringify(parsed.error.flatten()));
   const deleted = await deleteSession(parsed.data.id);
   if (!deleted) throw new WsError(404, "Session not found");
+
+  // Clean up per-session browser infrastructure and caches
+  cleanupBrowserSession(parsed.data.id).catch((err) => {
+    console.error(`[Session delete] Browser cleanup error for ${parsed.data.id}:`, err);
+  });
+  cleanupBrowserServiceCache(parsed.data.id);
+  clearLatestImage(parsed.data.id);
+
   ctx.broadcastGlobal("__sessions__", { type: "session_deleted", data: { id: parsed.data.id } });
   return {};
 });

@@ -12,7 +12,7 @@ export async function navigate(args: Record<string, unknown>, sessionId?: string
     throw new Error(`Invalid wait_until value: ${waitUntil}. Must be "load", "domcontentloaded", or "networkidle".`);
   }
 
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
   const targetHost = new URL(url).host;
 
   // Track document responses - some sites return 429/403 initially then reload via JS
@@ -40,7 +40,7 @@ export async function navigate(args: Record<string, unknown>, sessionId?: string
     await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
 
     // Navigation invalidates the element map
-    clearElementMap();
+    clearElementMap(sessionId!);
 
     const title = await page.title();
     // Use the last document response status (handles JS reloads), fallback to initial

@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Browser Sessions</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 1.5rem;
+      color: #fff;
+    }
+    .status {
+      color: #888;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .sessions {
+      width: 100%;
+      max-width: 600px;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .session {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+    }
+    .session:hover {
+      background: #1a2a4a;
+      border-color: #e94560;
+    }
+    .session-title {
+      font-size: 1.1rem;
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+    .session-id {
+      font-size: 0.75rem;
+      color: #666;
+      font-family: monospace;
+    }
+    .empty {
+      text-align: center;
+      color: #666;
+      padding: 3rem 1rem;
+    }
+    .empty p {
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Browser Sessions</h1>
+  <div class="status" id="status">Loading...</div>
+  <div class="sessions" id="sessions"></div>
+
+  <script>
+    const sessionsEl = document.getElementById("sessions");
+    const statusEl = document.getElementById("status");
+
+    async function fetchSessions() {
+      try {
+        const res = await fetch("/api/browser-sessions");
+        const data = await res.json();
+        render(data.sessions);
+      } catch (err) {
+        statusEl.textContent = "Failed to load sessions";
+      }
+    }
+
+    function render(sessions) {
+      if (!sessions || sessions.length === 0) {
+        sessionsEl.innerHTML = '<div class="empty"><p>No active browser sessions</p><p>Browser sessions are created when the AI uses browser tools in a chat.</p></div>';
+        statusEl.textContent = "0 active sessions";
+        return;
+      }
+      statusEl.textContent = sessions.length + " active session" + (sessions.length !== 1 ? "s" : "");
+      sessionsEl.innerHTML = sessions.map(function(s) {
+        var vncUrl = "/vnc/vnc.html?autoconnect=true&resize=scale&path=vnc/websockify&token=" + encodeURIComponent(s.id);
+        return '<a class="session" href="' + vncUrl + '" target="_blank">' +
+          '<div class="session-title">' + escapeHtml(s.title) + '</div>' +
+          '<div class="session-id">' + escapeHtml(s.id) + '</div>' +
+          '</a>';
+      }).join("");
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement("div");
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    fetchSessions();
+    setInterval(fetchSessions, 5000);
+  </script>
+</body>
+</html>

@@ -54,6 +54,7 @@ const mockBrowser = {
 };
 
 const mockChromium = {
+  launch: vi.fn().mockResolvedValue(mockBrowser),
   connect: vi.fn().mockResolvedValue(mockBrowser),
   connectOverCDP: vi.fn().mockResolvedValue(mockBrowser),
 };
@@ -62,10 +63,28 @@ vi.mock("patchright", () => ({
   chromium: mockChromium,
 }));
 
+// Mock child_process for Xvfb and x11vnc spawning
+const mockChildProcess = {
+  exitCode: null as number | null,
+  kill: vi.fn(),
+  on: vi.fn(),
+  pid: 12345,
+};
+
+vi.mock("child_process", () => ({
+  spawn: vi.fn().mockReturnValue(mockChildProcess),
+}));
+
+// Mock fs for display socket detection and token files
+vi.mock("fs", () => ({
+  existsSync: vi.fn().mockReturnValue(true),
+  writeFileSync: vi.fn(),
+  unlinkSync: vi.fn(),
+}));
+
 vi.mock("../config/env.js", () => ({
   env: {
-    BROWSER_WS_ENDPOINT: "ws://localhost:3100",
-    BROWSER_IDLE_TIMEOUT: 300,
+    BROWSER_IDLE_TIMEOUT: 0,
   },
 }));
 
@@ -217,27 +236,35 @@ const { executeJs } = await import(
 const { getText } = await import(
   "../services/tools/browser/operations/getText.js"
 );
-const { getBrowserPage, isBrowserConnected, disconnectBrowser, reconnectBrowser, clearElementMap } = await import(
+const { getBrowserPage, isBrowserConnected, disconnectBrowser, reconnectBrowser, clearElementMap, cleanupBrowserSession } = await import(
   "../services/tools/browser/connection.js"
+);
+const { browserSessionManager } = await import(
+  "../services/tools/browser/BrowserSessionManager.js"
 );
 
 // --- Helpers ---
 
+const SID = "test-session";
 const validate = (args: Record<string, unknown>) => browserTool.validate!(args);
 
-beforeEach(() => {
+beforeEach(async () => {
+  await browserSessionManager.destroyAll();
   vi.clearAllMocks();
-  // Reset singleton connection state so each test starts fresh
-  disconnectBrowser();
+  mockChildProcess.exitCode = null;
   mockPage.url.mockReturnValue("https://example.com");
   mockPage.title.mockResolvedValue("Example");
   mockPage.screenshot.mockResolvedValue(Buffer.from("fakejpeg"));
   mockPage.viewportSize.mockReturnValue({ width: 1920, height: 1080 });
   mockPage.isClosed.mockReturnValue(false);
+  mockPage.waitForLoadState.mockResolvedValue(undefined);
   mockBrowser.isConnected.mockReturnValue(true);
   mockBrowser.contexts.mockReturnValue([]);
   mockBrowser.newContext.mockResolvedValue(mockContext);
+  mockBrowser.close.mockResolvedValue(undefined);
+  mockContext.newPage.mockResolvedValue(mockPage);
   mockContext.newCDPSession.mockResolvedValue(mockCDPSession);
+  mockCDPSession.detach.mockResolvedValue(undefined);
   setupCDPMock();
 });
 
@@ -443,7 +470,7 @@ describe("navigate", () => {
     mockPage.url.mockReturnValue("https://example.com/");
     mockPage.title.mockResolvedValue("Example Domain");
 
-    const raw = await navigate({ url: "https://example.com" });
+    const raw = await navigate({ url: "https://example.com" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_navigate");
@@ -460,7 +487,7 @@ describe("navigate", () => {
   it("uses custom wait_until", async () => {
     mockPage.goto.mockResolvedValue({ status: () => 200 });
 
-    await navigate({ url: "https://example.com", wait_until: "networkidle" });
+    await navigate({ url: "https://example.com", wait_until: "networkidle" }, SID);
 
     expect(mockPage.goto).toHaveBeenCalledWith(
       "https://example.com",
@@ -469,19 +496,19 @@ describe("navigate", () => {
   });
 
   it("throws on missing url", async () => {
-    await expect(navigate({})).rejects.toThrow("Missing required argument: url");
+    await expect(navigate({}, SID)).rejects.toThrow("Missing required argument: url");
   });
 
   it("throws on invalid wait_until", async () => {
     await expect(
-      navigate({ url: "https://example.com", wait_until: "bogus" }),
+      navigate({ url: "https://example.com", wait_until: "bogus" }, SID),
     ).rejects.toThrow("Invalid wait_until value");
   });
 
   it("returns null status when response is null", async () => {
     mockPage.goto.mockResolvedValue(null);
 
-    const raw = await navigate({ url: "https://example.com" });
+    const raw = await navigate({ url: "https://example.com" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.status).toBeNull();
@@ -543,7 +570,7 @@ describe("screenshot", () => {
   it("throws when selector element not found", async () => {
     mockPage.$.mockResolvedValue(null);
 
-    await expect(screenshot({ selector: "#missing" })).rejects.toThrow(
+    await expect(screenshot({ selector: "#missing" }, SID)).rejects.toThrow(
       "Element not found: #missing",
     );
   });
@@ -555,7 +582,7 @@ describe("screenshot", () => {
 
 describe("getContent", () => {
   it("returns accessibility tree in tree mode (default)", async () => {
-    const raw = await getContent({});
+    const raw = await getContent({}, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_content");
@@ -576,14 +603,14 @@ describe("getContent", () => {
   });
 
   it("tree mode calls CDP Accessibility.getFullAXTree", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     expect(mockCDPSession.send).toHaveBeenCalledWith("Accessibility.enable");
     expect(mockCDPSession.send).toHaveBeenCalledWith("Accessibility.getFullAXTree");
   });
 
   it("tree mode filters ignored nodes", async () => {
-    const raw = await getContent({});
+    const raw = await getContent({}, SID);
     const result = JSON.parse(raw);
 
     // Node 5 is ignored, should not appear as a numbered element
@@ -593,7 +620,7 @@ describe("getContent", () => {
   });
 
   it("tree mode supports pagination with offset", async () => {
-    const raw = await getContent({ offset: 0 });
+    const raw = await getContent({ offset: 0 }, SID);
     const result = JSON.parse(raw);
 
     // With small mock tree, should not be truncated
@@ -607,7 +634,7 @@ describe("getContent", () => {
       truncated: false,
     });
 
-    const raw = await getContent({ mode: "dom" });
+    const raw = await getContent({ mode: "dom" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_content");
@@ -622,7 +649,7 @@ describe("getContent", () => {
       truncated: false,
     });
 
-    await getContent({ mode: "dom", selector: "#content", max_depth: 3 });
+    await getContent({ mode: "dom", selector: "#content", max_depth: 3 }, SID);
 
     expect(mockPage.evaluate).toHaveBeenCalledTimes(1);
     const call = mockPage.evaluate.mock.calls[0];
@@ -637,7 +664,7 @@ describe("getContent", () => {
   it("text mode returns innerText", async () => {
     mockPage.evaluate.mockResolvedValue("Hello world\nSome content");
 
-    const raw = await getContent({ mode: "text" });
+    const raw = await getContent({ mode: "text" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_content");
@@ -646,7 +673,7 @@ describe("getContent", () => {
   });
 
   it("throws on invalid mode", async () => {
-    await expect(getContent({ mode: "bogus" })).rejects.toThrow("Invalid mode");
+    await expect(getContent({ mode: "bogus" }, SID)).rejects.toThrow("Invalid mode");
   });
 
   it("retries when tree is empty on first attempt (race condition after navigation)", async () => {
@@ -683,7 +710,7 @@ describe("getContent", () => {
       return Promise.resolve({});
     });
 
-    const raw = await getContent({});
+    const raw = await getContent({}, SID);
     const result = JSON.parse(raw);
 
     // Should have retried and returned the real tree
@@ -722,7 +749,7 @@ describe("getContent", () => {
       return Promise.resolve({});
     });
 
-    const raw = await getContent({});
+    const raw = await getContent({}, SID);
     const result = JSON.parse(raw);
 
     // Should return empty result after exhausting retries
@@ -737,9 +764,9 @@ describe("getContent", () => {
 describe("click", () => {
   it("clicks by element index using CDP coordinates", async () => {
     // First populate element map via get_content
-    await getContent({});
+    await getContent({}, SID);
 
-    const raw = await click({ element: 1 });
+    const raw = await click({ element: 1 }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_click");
@@ -764,7 +791,7 @@ describe("click", () => {
   });
 
   it("clicks by raw coordinates", async () => {
-    const raw = await click({ x: 300, y: 400 });
+    const raw = await click({ x: 300, y: 400 }, SID);
     const result = JSON.parse(raw);
 
     expect(result.success).toBe(true);
@@ -778,18 +805,18 @@ describe("click", () => {
   });
 
   it("throws when element index not found (empty map)", async () => {
-    await expect(click({ element: 99 })).rejects.toThrow(
+    await expect(click({ element: 99 }, SID)).rejects.toThrow(
       /not found.*browser_get_content/,
     );
   });
 
   it("throws ELEMENT_NOT_FOUND when index out of range", async () => {
-    await getContent({});
-    await expect(click({ element: 999 })).rejects.toThrow(/not found/);
+    await getContent({}, SID);
+    await expect(click({ element: 999 }, SID)).rejects.toThrow(/not found/);
   });
 
   it("throws STALE_ELEMENT when element no longer exists", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     // Make CDP calls fail (simulating stale element after page change)
     mockCDPSession.send.mockImplementation((method: string) => {
@@ -799,15 +826,15 @@ describe("click", () => {
       return Promise.resolve({});
     });
 
-    await expect(click({ element: 1 })).rejects.toThrow(/no longer exists/);
+    await expect(click({ element: 1 }, SID)).rejects.toThrow(/no longer exists/);
   });
 
   it("throws when no target specified", async () => {
-    await expect(click({})).rejects.toThrow("click requires element index");
+    await expect(click({}, SID)).rejects.toThrow("click requires element index");
   });
 
   it("passes button and click_count options", async () => {
-    const raw = await click({ x: 100, y: 200, button: "right", click_count: 2 });
+    const raw = await click({ x: 100, y: 200, button: "right", click_count: 2 }, SID);
     JSON.parse(raw);
 
     expect(mockPage.mouse.click).toHaveBeenCalledWith(
@@ -824,9 +851,9 @@ describe("click", () => {
 
 describe("typeText", () => {
   it("types text into element by index", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
-    const raw = await typeText({ element: 2, text: "hello@example.com" });
+    const raw = await typeText({ element: 2, text: "hello@example.com" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_type");
@@ -845,7 +872,7 @@ describe("typeText", () => {
   });
 
   it("types into currently focused element when no target", async () => {
-    const raw = await typeText({ text: "hello" });
+    const raw = await typeText({ text: "hello" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.success).toBe(true);
@@ -857,7 +884,7 @@ describe("typeText", () => {
   });
 
   it("clear_first selects all and deletes", async () => {
-    await typeText({ text: "new", clear_first: true });
+    await typeText({ text: "new", clear_first: true }, SID);
 
     expect(mockPage.keyboard.press).toHaveBeenCalledWith("Control+a");
     expect(mockPage.keyboard.press).toHaveBeenCalledWith("Backspace");
@@ -868,11 +895,11 @@ describe("typeText", () => {
   });
 
   it("throws on missing text", async () => {
-    await expect(typeText({})).rejects.toThrow("Missing required argument: text");
+    await expect(typeText({}, SID)).rejects.toThrow("Missing required argument: text");
   });
 
   it("throws STALE_ELEMENT when element no longer exists", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     // Make element resolution fail (simulating stale element after page change)
     mockCDPSession.send.mockImplementation((method: string) => {
@@ -882,7 +909,7 @@ describe("typeText", () => {
       return Promise.resolve({});
     });
 
-    await expect(typeText({ element: 2, text: "hello" })).rejects.toThrow(/no longer exists/);
+    await expect(typeText({ element: 2, text: "hello" }, SID)).rejects.toThrow(/no longer exists/);
   });
 });
 
@@ -892,25 +919,25 @@ describe("typeText", () => {
 
 describe("pressKey", () => {
   it("presses Enter key", async () => {
-    await pressKey({ key: "Enter" });
+    await pressKey({ key: "Enter" }, SID);
 
     expect(mockPage.keyboard.press).toHaveBeenCalledWith("Enter");
   });
 
   it("presses Tab key", async () => {
-    await pressKey({ key: "Tab" });
+    await pressKey({ key: "Tab" }, SID);
 
     expect(mockPage.keyboard.press).toHaveBeenCalledWith("Tab");
   });
 
   it("presses modifier combo", async () => {
-    await pressKey({ key: "Control+a" });
+    await pressKey({ key: "Control+a" }, SID);
 
     expect(mockPage.keyboard.press).toHaveBeenCalledWith("Control+a");
   });
 
   it("throws on missing key", async () => {
-    await expect(pressKey({})).rejects.toThrow("Missing required argument: key");
+    await expect(pressKey({}, SID)).rejects.toThrow("Missing required argument: key");
   });
 });
 
@@ -920,7 +947,7 @@ describe("pressKey", () => {
 
 describe("scroll", () => {
   it("scrolls down one page by default", async () => {
-    const raw = await scroll({});
+    const raw = await scroll({}, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_scroll");
@@ -931,27 +958,27 @@ describe("scroll", () => {
   });
 
   it("scrolls up one page", async () => {
-    await scroll({ direction: "up" });
+    await scroll({ direction: "up" }, SID);
 
     expect(mockPage.mouse.wheel).toHaveBeenCalledWith(0, -1080);
   });
 
   it("scrolls half page", async () => {
-    await scroll({ direction: "down", amount: "half" });
+    await scroll({ direction: "down", amount: "half" }, SID);
 
     expect(mockPage.mouse.wheel).toHaveBeenCalledWith(0, 540);
   });
 
   it("scrolls by pixel amount", async () => {
-    await scroll({ direction: "down", amount: 300 });
+    await scroll({ direction: "down", amount: 300 }, SID);
 
     expect(mockPage.mouse.wheel).toHaveBeenCalledWith(0, 300);
   });
 
   it("scrolls to element using CDP", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
-    const raw = await scroll({ to_element: 2 });
+    const raw = await scroll({ to_element: 2 }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_scroll");
@@ -968,11 +995,11 @@ describe("scroll", () => {
   });
 
   it("throws on invalid direction", async () => {
-    await expect(scroll({ direction: "left" })).rejects.toThrow("Invalid direction");
+    await expect(scroll({ direction: "left" }, SID)).rejects.toThrow("Invalid direction");
   });
 
   it("throws ELEMENT_NOT_FOUND for to_element without get_content", async () => {
-    await expect(scroll({ to_element: 5 })).rejects.toThrow(/not found/);
+    await expect(scroll({ to_element: 5 }, SID)).rejects.toThrow(/not found/);
   });
 });
 
@@ -983,7 +1010,7 @@ describe("scroll", () => {
 describe("getText", () => {
   it("returns full text for elements by index", async () => {
     // First populate element map
-    await getContent({});
+    await getContent({}, SID);
 
     // Setup CDP mocks for getText
     mockCDPSession.send.mockImplementation((method: string) => {
@@ -1007,7 +1034,7 @@ describe("getText", () => {
       return Promise.resolve({});
     });
 
-    const raw = await getText({ elements: [1, 2] });
+    const raw = await getText({ elements: [1, 2] }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_get_text");
@@ -1019,22 +1046,22 @@ describe("getText", () => {
   });
 
   it("throws when elements array is missing", async () => {
-    await expect(getText({})).rejects.toThrow("Missing required argument: elements");
+    await expect(getText({}, SID)).rejects.toThrow("Missing required argument: elements");
   });
 
   it("throws when elements array is empty", async () => {
-    await expect(getText({ elements: [] })).rejects.toThrow("Missing required argument: elements");
+    await expect(getText({ elements: [] }, SID)).rejects.toThrow("Missing required argument: elements");
   });
 
   it("throws when too many elements requested", async () => {
     const tooMany = Array.from({ length: 25 }, (_, i) => i);
-    await expect(getText({ elements: tooMany })).rejects.toThrow("Too many elements");
+    await expect(getText({ elements: tooMany }, SID)).rejects.toThrow("Too many elements");
   });
 
   it("returns error for invalid element index", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
-    const raw = await getText({ elements: [999] });
+    const raw = await getText({ elements: [999] }, SID);
     const result = JSON.parse(raw);
 
     expect(result.elements[0].index).toBe(999);
@@ -1042,7 +1069,7 @@ describe("getText", () => {
   });
 
   it("falls back to accessibility name when DOM.resolveNode returns no objectId", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     mockCDPSession.send.mockImplementation((method: string) => {
       if (method === "DOM.resolveNode") {
@@ -1058,7 +1085,7 @@ describe("getText", () => {
       return Promise.resolve({});
     });
 
-    const raw = await getText({ elements: [1] });
+    const raw = await getText({ elements: [1] }, SID);
     const result = JSON.parse(raw);
 
     // Should fall back to accessibility name
@@ -1074,7 +1101,7 @@ describe("executeJs", () => {
   it("executes script and returns result", async () => {
     mockPage.evaluate.mockResolvedValue(42);
 
-    const raw = await executeJs({ script: "return 42" });
+    const raw = await executeJs({ script: "return 42" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.type).toBe("browser_js");
@@ -1084,7 +1111,7 @@ describe("executeJs", () => {
   it("wraps script in async IIFE", async () => {
     mockPage.evaluate.mockResolvedValue(null);
 
-    await executeJs({ script: "return await fetch('/api')" });
+    await executeJs({ script: "return await fetch('/api')" }, SID);
 
     expect(mockPage.evaluate).toHaveBeenCalledWith(
       expect.stringContaining("(async () => {"),
@@ -1095,13 +1122,13 @@ describe("executeJs", () => {
   });
 
   it("throws on missing script", async () => {
-    await expect(executeJs({})).rejects.toThrow("Missing required argument: script");
+    await expect(executeJs({}, SID)).rejects.toThrow("Missing required argument: script");
   });
 
   it("wraps evaluation errors", async () => {
     mockPage.evaluate.mockRejectedValue(new Error("ReferenceError: foo is not defined"));
 
-    await expect(executeJs({ script: "foo()" })).rejects.toThrow(
+    await expect(executeJs({ script: "foo()" }, SID)).rejects.toThrow(
       "JavaScript execution error: ReferenceError: foo is not defined",
     );
   });
@@ -1109,7 +1136,7 @@ describe("executeJs", () => {
   it("returns null for undefined result", async () => {
     mockPage.evaluate.mockResolvedValue(undefined);
 
-    const raw = await executeJs({ script: "void 0" });
+    const raw = await executeJs({ script: "void 0" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.result).toBeNull();
@@ -1119,7 +1146,7 @@ describe("executeJs", () => {
     const complex = { items: [1, 2, 3], nested: { key: "value" } };
     mockPage.evaluate.mockResolvedValue(complex);
 
-    const raw = await executeJs({ script: "return {items: [1,2,3], nested: {key: 'value'}}" });
+    const raw = await executeJs({ script: "return {items: [1,2,3], nested: {key: 'value'}}" }, SID);
     const result = JSON.parse(raw);
 
     expect(result.result).toEqual(complex);
@@ -1131,57 +1158,52 @@ describe("executeJs", () => {
 // ========================
 
 describe("connection manager", () => {
-  it("getBrowserPage auto-connects and returns a page", async () => {
-    const page = await getBrowserPage();
+  it("getBrowserPage creates session with chromium.launch", async () => {
+    const page = await getBrowserPage(SID);
     expect(page).toBeDefined();
-    expect(mockChromium.connect).toHaveBeenCalledWith("ws://localhost:3100", {
-      timeout: 15_000,
-    });
+    expect(mockChromium.launch).toHaveBeenCalled();
   });
 
-  it("isBrowserConnected returns true after connection", async () => {
-    await getBrowserPage();
-    expect(isBrowserConnected()).toBe(true);
+  it("isBrowserConnected returns true after session creation", async () => {
+    await getBrowserPage(SID);
+    expect(isBrowserConnected(SID)).toBe(true);
   });
 
-  it("disconnectBrowser cleans up state", async () => {
-    await getBrowserPage();
-    disconnectBrowser();
-    // After disconnect the browser.close() was called
+  it("isBrowserConnected returns false for unknown session", () => {
+    expect(isBrowserConnected("nonexistent")).toBe(false);
+  });
+
+  it("cleanupBrowserSession destroys session", async () => {
+    await getBrowserPage(SID);
+    await cleanupBrowserSession(SID);
     expect(mockBrowser.close).toHaveBeenCalled();
+    expect(isBrowserConnected(SID)).toBe(false);
   });
 
-  it("reconnectBrowser disconnects old connection and connects fresh", async () => {
-    await getBrowserPage();
-    const connectCountBefore = mockChromium.connect.mock.calls.length;
+  it("reconnectBrowser destroys and recreates session", async () => {
+    await getBrowserPage(SID);
+    const launchCountBefore = mockChromium.launch.mock.calls.length;
 
-    await reconnectBrowser();
+    await reconnectBrowser(SID);
 
-    // Should have called close on the old browser and connected again
+    // Should have called close on the old browser and launched again
     expect(mockBrowser.close).toHaveBeenCalled();
-    expect(mockChromium.connect.mock.calls.length).toBe(connectCountBefore + 1);
+    expect(mockChromium.launch.mock.calls.length).toBe(launchCountBefore + 1);
   });
 
-  it("reconnectBrowser with custom endpoint uses connectOverCDP", async () => {
-    await reconnectBrowser("http://localhost:9222");
+  it("reconnectBrowser stores endpoint override when provided", async () => {
+    await reconnectBrowser(SID, "http://localhost:9222");
 
-    const lastCall = mockChromium.connectOverCDP.mock.calls.at(-1)!;
-    expect(lastCall[0]).toBe("http://localhost:9222");
+    const session = browserSessionManager.get(SID);
+    expect(session?.wsEndpointOverride).toBe("http://localhost:9222");
   });
 
-  it("reconnectBrowser prepends http:// when scheme is missing", async () => {
-    await reconnectBrowser("localhost:9222");
+  it("reconnectBrowser without endpoint has no override", async () => {
+    await reconnectBrowser(SID, "http://localhost:9222");
+    await reconnectBrowser(SID); // no endpoint
 
-    const lastCall = mockChromium.connectOverCDP.mock.calls.at(-1)!;
-    expect(lastCall[0]).toBe("http://localhost:9222");
-  });
-
-  it("reconnectBrowser without endpoint resets to default (WS)", async () => {
-    await reconnectBrowser("localhost:9222");
-    await reconnectBrowser(); // no endpoint → back to default WS
-
-    const lastCall = mockChromium.connect.mock.calls.at(-1)!;
-    expect(lastCall[0]).toBe("ws://localhost:3100");
+    const session = browserSessionManager.get(SID);
+    expect(session?.wsEndpointOverride).toBeNull();
   });
 
   it("connect operation always reconnects even if already connected", async () => {
@@ -1190,16 +1212,16 @@ describe("connection manager", () => {
     const result1 = JSON.parse(raw1);
     expect(result1.status).toBe("connected");
 
-    const connectCountBefore = mockChromium.connect.mock.calls.length;
+    const launchCountBefore = mockChromium.launch.mock.calls.length;
 
     // Second connect — should still reconnect, not return already_connected
     const raw2 = await browserTool.execute({ operation: "connect" }, "s1");
     const result2 = JSON.parse(raw2);
     expect(result2.status).toBe("connected");
-    expect(mockChromium.connect.mock.calls.length).toBe(connectCountBefore + 1);
+    expect(mockChromium.launch.mock.calls.length).toBe(launchCountBefore + 1);
   });
 
-  it("connect operation with custom endpoint uses connectOverCDP", async () => {
+  it("connect operation with custom endpoint stores override", async () => {
     const raw = await browserTool.execute(
       { operation: "connect", address: "localhost:9222" },
       "s1",
@@ -1207,8 +1229,8 @@ describe("connection manager", () => {
     const result = JSON.parse(raw);
     expect(result.status).toBe("connected");
 
-    const lastCall = mockChromium.connectOverCDP.mock.calls.at(-1)!;
-    expect(lastCall[0]).toBe("http://localhost:9222");
+    const session = browserSessionManager.get("s1");
+    expect(session?.wsEndpointOverride).toBe("localhost:9222");
   });
 });
 
@@ -1218,23 +1240,23 @@ describe("connection manager", () => {
 
 describe("element map lifecycle", () => {
   it("get_content populates element map for subsequent click", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     // Now click should work with element indices
-    const raw = await click({ element: 1 });
+    const raw = await click({ element: 1 }, SID);
     const result = JSON.parse(raw);
     expect(result.success).toBe(true);
   });
 
   it("navigate clears element map", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     // Navigate should clear the map
     mockPage.goto.mockResolvedValue({ status: () => 200 });
-    await navigate({ url: "https://example.com/new" });
+    await navigate({ url: "https://example.com/new" }, SID);
 
     // Now click by element should fail
-    await expect(click({ element: 1 })).rejects.toThrow(/not found.*browser_get_content/);
+    await expect(click({ element: 1 }, SID)).rejects.toThrow(/not found.*browser_get_content/);
   });
 
   it("Accessibility.enable is called eagerly when CDPSession is created", async () => {
@@ -1242,7 +1264,7 @@ describe("element map lifecycle", () => {
     mockCDPSession.send.mockClear();
 
     // get_content triggers CDPSession creation which should call Accessibility.enable
-    await getContent({});
+    await getContent({}, SID);
 
     const sendCalls = mockCDPSession.send.mock.calls.map((c: unknown[]) => c[0]);
     const enableIdx = sendCalls.indexOf("Accessibility.enable");
@@ -1253,40 +1275,40 @@ describe("element map lifecycle", () => {
   });
 
   it("navigate invalidates CDP session so next get_content creates a fresh one", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     // At this point a CDPSession has been created
     const firstSessionCallCount = mockContext.newCDPSession.mock.calls.length;
 
     // Navigate — should invalidate the CDPSession
     mockPage.goto.mockResolvedValue({ status: () => 200 });
-    await navigate({ url: "https://example.com/new" });
+    await navigate({ url: "https://example.com/new" }, SID);
 
     // The old session should have been detached
     expect(mockCDPSession.detach).toHaveBeenCalled();
 
     // Next get_content should create a new CDPSession
-    await getContent({});
+    await getContent({}, SID);
     expect(mockContext.newCDPSession.mock.calls.length).toBeGreaterThan(firstSessionCallCount);
   });
 
-  it("disconnect clears element map", async () => {
-    await getContent({});
+  it("destroy clears element map", async () => {
+    await getContent({}, SID);
 
-    disconnectBrowser();
+    await cleanupBrowserSession(SID);
 
-    // After reconnection, element map should be empty
-    await expect(click({ element: 1 })).rejects.toThrow(/not found/);
+    // After session destruction, next click creates new session with empty element map
+    await expect(click({ element: 1 }, SID)).rejects.toThrow(/not found/);
   });
 
   it("get_content refreshes element map", async () => {
-    await getContent({});
+    await getContent({}, SID);
 
     // Call get_content again — should update the map
-    await getContent({});
+    await getContent({}, SID);
 
     // Click should still work
-    const raw = await click({ element: 1 });
+    const raw = await click({ element: 1 }, SID);
     const result = JSON.parse(raw);
     expect(result.success).toBe(true);
   });
@@ -1341,7 +1363,7 @@ describe("browserTool.execute dispatch", () => {
     const { getContent } = await import("../services/tools/browser/operations/getContent.js");
 
     // Populate element map by calling getContent
-    await getContent({});
+    await getContent({}, "session-1");
 
     const raw = await browserTool.execute(
       { operation: "click", element: 1 },

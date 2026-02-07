@@ -3,6 +3,8 @@ import cors from "cors";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { registerAllTools } from "./services/tools/index.js";
 import { getSessionFilePath } from "./services/sessionFiles.js";
+import { getActiveBrowserSessions } from "./services/tools/browser/connection.js";
+import { getSession } from "./services/sessionStore.js";
 
 registerAllTools();
 
@@ -24,6 +26,22 @@ app.get("/api/sessions/:id/files/:filename", (req, res) => {
     return;
   }
   res.sendFile(filePath);
+});
+
+// Active browser sessions for VNC selector
+app.get("/api/browser-sessions", async (_req, res) => {
+  const sessionIds = getActiveBrowserSessions();
+  const sessions = await Promise.all(
+    sessionIds.map(async (id) => {
+      const session = await getSession(id);
+      return {
+        id,
+        title: session?.title ?? "Unknown",
+        createdAt: session?.createdAt ?? null,
+      };
+    }),
+  );
+  res.json({ sessions });
 });
 
 app.use(errorHandler);

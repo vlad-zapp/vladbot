@@ -80,8 +80,8 @@ export class DeepSeekProvider implements AIProviderInterface {
         if (msg.images?.length) {
           // DeepSeek is text-only; store the first image for the vision tool
           const resolved = await resolveImageToBase64(msg.images[0]);
-          if (resolved) {
-            storeLatestImage(resolved.base64, resolved.mimeType);
+          if (resolved && sessionId) {
+            storeLatestImage(sessionId, resolved.base64, resolved.mimeType);
           }
           if (visionAvailable) {
             content += "\n\n[The user attached an image. Use the vision_analyze tool to see and analyze it.]";
@@ -112,7 +112,7 @@ export class DeepSeekProvider implements AIProviderInterface {
 
             if (i === lastToolIdx && extracted.imageBase64) {
               // Store image for the vision tool to consume
-              storeLatestImage(extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
+              if (sessionId) storeLatestImage(sessionId, extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
 
               if (visionAvailable) {
                 content = `${extracted.text}\n\n[This tool result includes an image. Use the vision_analyze tool to examine it — provide a specific prompt describing what you need to know.]`;

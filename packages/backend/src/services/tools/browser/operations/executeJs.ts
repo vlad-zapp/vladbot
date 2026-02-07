@@ -1,11 +1,11 @@
 import { getBrowserPage } from "../connection.js";
 import type { BrowserJsResult } from "../types.js";
 
-export async function executeJs(args: Record<string, unknown>): Promise<string> {
+export async function executeJs(args: Record<string, unknown>, sessionId?: string): Promise<string> {
   const script = args.script as string;
   if (!script) throw new Error("Missing required argument: script");
 
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
 
   let returnValue: unknown;
   try {

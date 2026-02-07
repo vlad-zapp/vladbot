@@ -39,8 +39,8 @@ export class AnthropicProvider implements AIProviderInterface {
           if (useVisionOverride) {
             // Vision model override: store image for vision_analyze tool
             const resolved = await resolveImageToBase64(msg.images[0]);
-            if (resolved) {
-              storeLatestImage(resolved.base64, resolved.mimeType);
+            if (resolved && sessionId) {
+              storeLatestImage(sessionId, resolved.base64, resolved.mimeType);
             }
             result.push({
               role: "user",
@@ -94,7 +94,7 @@ export class AnthropicProvider implements AIProviderInterface {
             const extracted = await extractToolResultImage(tr.output);
             if (includeImages && extracted.imageBase64 && useVisionOverride) {
               // Vision model override: store image, let LLM use vision_analyze tool
-              storeLatestImage(extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
+              if (sessionId) storeLatestImage(sessionId, extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
               content.push({
                 type: "tool_result",
                 tool_use_id: tr.toolCallId,
@@ -103,7 +103,7 @@ export class AnthropicProvider implements AIProviderInterface {
               });
             } else if (includeImages && extracted.imageBase64) {
               // Native vision: send image directly
-              storeLatestImage(extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
+              if (sessionId) storeLatestImage(sessionId, extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
               content.push({
                 type: "tool_result",
                 tool_use_id: tr.toolCallId,

@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV DISPLAY=:99
+# No global DISPLAY — per-session virtual displays managed by backend
 
 # System dependencies
 RUN apt-get update && apt-get install -y \
@@ -68,14 +68,14 @@ RUN sed -i 's|"./src/index.ts"|"./dist/index.js"|g' packages/shared/package.json
 RUN npm prune --omit=dev
 ENV NODE_ENV=production
 
-# Copy browser server files
-COPY docker/browser/server.js /app/browser-server.js
-
 # Create data directories and symlink for session files
-RUN mkdir -p /data/profile /data/files && \
+RUN mkdir -p /data/profile /data/files /data/vnc-tokens && \
     chown -R vladbot:vladbot /data && \
     mkdir -p /app/data && \
     ln -s /data/files /app/data/files
+
+# VNC session selector page
+COPY docker/all-in-one/vnc-selector.html /app/vnc-selector.html
 
 # nginx config - serve frontend, proxy backend
 RUN rm /etc/nginx/sites-enabled/default

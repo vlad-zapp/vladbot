@@ -147,26 +147,32 @@ export function hasVisionModel(): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Latest-image buffer (for the vision tool to consume)
+// Latest-image buffer (for the vision tool to consume) — per-session
 // ---------------------------------------------------------------------------
 
-let latestImage: { base64: string; mimeType: string; rawBuffer: Buffer } | null = null;
+const latestImages = new Map<string, { base64: string; mimeType: string; rawBuffer: Buffer }>();
 
-export function storeLatestImage(base64: string, mimeType: string, rawBuffer?: Buffer): void {
-  latestImage = {
+export function storeLatestImage(sessionId: string, base64: string, mimeType: string, rawBuffer?: Buffer): void {
+  latestImages.set(sessionId, {
     base64,
     mimeType,
     rawBuffer: rawBuffer ?? Buffer.from(base64, "base64"),
-  };
+  });
 }
 
-export function getLatestImage(): { base64: string; mimeType: string } | null {
-  return latestImage;
+export function getLatestImage(sessionId: string): { base64: string; mimeType: string } | null {
+  const img = latestImages.get(sessionId);
+  return img ? { base64: img.base64, mimeType: img.mimeType } : null;
 }
 
 /** Get the raw image buffer (full quality) for tools like ShowUI coordinate detection. */
-export function getLatestImageBuffer(): Buffer | null {
-  return latestImage?.rawBuffer ?? null;
+export function getLatestImageBuffer(sessionId: string): Buffer | null {
+  return latestImages.get(sessionId)?.rawBuffer ?? null;
+}
+
+/** Clear the latest image for a session (cleanup on session delete). */
+export function clearLatestImage(sessionId: string): void {
+  latestImages.delete(sessionId);
 }
 
 // ---------------------------------------------------------------------------

@@ -5,8 +5,8 @@ set -e
 mkdir -p /var/log/supervisor
 
 # Ensure data directories exist and have correct permissions
-mkdir -p /data/profile /data/files /data/postgres
-chown -R vladbot:vladbot /data/profile /data/files
+mkdir -p /data/profile /data/files /data/postgres /data/vnc-tokens
+chown -R vladbot:vladbot /data/profile /data/files /data/vnc-tokens
 chown -R postgres:postgres /data/postgres
 
 # Initialize PostgreSQL if this is first run
@@ -47,9 +47,9 @@ if [ -n "$DEEPSEEK_API_KEY" ]; then
     API_KEYS="${API_KEYS},DEEPSEEK_API_KEY=\"$DEEPSEEK_API_KEY\""
 fi
 
-# Inject API keys into supervisor config if any are set
+# Inject API keys into supervisor backend environment if any are set
 if [ -n "$API_KEYS" ]; then
-    sed -i "s|BROWSER_WS_ENDPOINT=\"ws://localhost:3100\"|BROWSER_WS_ENDPOINT=\"ws://localhost:3100\"${API_KEYS}|" /etc/supervisor/conf.d/vladbot.conf
+    sed -i "s|DATABASE_URL=\"postgresql://vladbot:vladbot@localhost:5432/vladbot\"|DATABASE_URL=\"postgresql://vladbot:vladbot@localhost:5432/vladbot\"${API_KEYS}|" /etc/supervisor/conf.d/vladbot.conf
 fi
 
 echo "Starting Vladbot all-in-one container..."

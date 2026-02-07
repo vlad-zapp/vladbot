@@ -8,7 +8,7 @@ export async function screenshot(
 ): Promise<string> {
   const selector = args.selector as string | undefined;
 
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
 
   let buffer: Buffer;
   if (selector) {

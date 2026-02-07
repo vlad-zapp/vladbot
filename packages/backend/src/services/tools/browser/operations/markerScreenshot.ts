@@ -11,7 +11,7 @@ export async function takeMarkerScreenshot(
   y: number,
   sessionId?: string,
 ): Promise<{ image_url?: string; image_base64?: string }> {
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
 
   // Inject marker element with fixed positioning (viewport coordinates)
   // Uses DOM APIs instead of innerHTML to work with Trusted Types CSP (e.g., Google login pages)

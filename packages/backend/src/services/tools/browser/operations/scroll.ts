@@ -6,7 +6,7 @@ import {
 } from "../connection.js";
 import type { BrowserScrollResult } from "../types.js";
 
-export async function scroll(args: Record<string, unknown>): Promise<string> {
+export async function scroll(args: Record<string, unknown>, sessionId?: string): Promise<string> {
   const direction = (args.direction as string) || "down";
   const amount = args.amount as string | number | undefined;
   const toElement = args.to_element as number | undefined;
@@ -17,11 +17,11 @@ export async function scroll(args: Record<string, unknown>): Promise<string> {
     );
   }
 
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
 
   if (toElement !== undefined) {
-    const el = resolveElement(toElement);
-    const cdp = await getCDPSession();
+    const el = resolveElement(sessionId!, toElement);
+    const cdp = await getCDPSession(sessionId!);
 
     try {
       await cdp.send("DOM.scrollIntoViewIfNeeded", {

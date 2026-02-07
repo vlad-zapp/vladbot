@@ -43,8 +43,8 @@ export class GeminiProvider implements AIProviderInterface {
           if (useVisionOverride) {
             // Vision model override: store image for vision_analyze tool
             const resolved = await resolveImageToBase64(msg.images[0]);
-            if (resolved) {
-              storeLatestImage(resolved.base64, resolved.mimeType);
+            if (resolved && sessionId) {
+              storeLatestImage(sessionId, resolved.base64, resolved.mimeType);
             }
             result.push({
               role: "user",
@@ -92,7 +92,7 @@ export class GeminiProvider implements AIProviderInterface {
 
             if (includeImages && extracted.imageBase64) {
               // Always store for the vision tool
-              storeLatestImage(extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
+              if (sessionId) storeLatestImage(sessionId, extracted.imageBase64, extracted.mimeType ?? "image/jpeg", extracted.rawBuffer);
             }
 
             if (includeImages && extracted.imageBase64 && useVisionOverride) {

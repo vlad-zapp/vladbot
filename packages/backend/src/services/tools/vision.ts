@@ -33,7 +33,11 @@ export const visionTool: Tool = {
       return JSON.stringify({ error: "prompt is required" });
     }
 
-    const image = getLatestImage();
+    if (!sessionId) {
+      return JSON.stringify({ error: "Session ID required for vision tool" });
+    }
+
+    const image = getLatestImage(sessionId);
     if (!image) {
       return JSON.stringify({
         error: "No image available. A tool that produces an image (e.g. screenshot) must be called first.",

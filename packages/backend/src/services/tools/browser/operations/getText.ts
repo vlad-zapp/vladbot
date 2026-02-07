@@ -14,7 +14,7 @@ export interface GetTextResult {
  * Get the full text content of elements by their indices.
  * Uses CDP to fetch innerText from the actual DOM nodes.
  */
-export async function getText(args: Record<string, unknown>): Promise<string> {
+export async function getText(args: Record<string, unknown>, sessionId?: string): Promise<string> {
   const elements = args.elements as number[] | undefined;
   if (!elements || !Array.isArray(elements) || elements.length === 0) {
     throw new Error("Missing required argument: elements (array of element indices)");
@@ -24,12 +24,12 @@ export async function getText(args: Record<string, unknown>): Promise<string> {
     throw new Error("Too many elements requested. Maximum is 20 per call.");
   }
 
-  const cdp = await getCDPSession();
+  const cdp = await getCDPSession(sessionId!);
   const results: GetTextResult["elements"] = [];
 
   for (const index of elements) {
     try {
-      const ref = resolveElement(index);
+      const ref = resolveElement(sessionId!, index);
 
       // Use CDP to get the DOM node and its innerText
       const { object } = await cdp.send("DOM.resolveNode", {

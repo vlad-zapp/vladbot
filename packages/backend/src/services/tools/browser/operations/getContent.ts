@@ -91,7 +91,7 @@ const SIMPLIFIED_DOM_SCRIPT = `
 // Default limit: ~5000 tokens = ~20,000 characters
 const DEFAULT_MAX_CHARS = 20_000;
 
-export async function getContent(args: Record<string, unknown>): Promise<string> {
+export async function getContent(args: Record<string, unknown>, sessionId?: string): Promise<string> {
   const mode = (args.mode as string) || "tree";
   if (!["tree", "dom", "text"].includes(mode)) {
     throw new Error(`Invalid mode: ${mode}. Must be "tree", "dom", or "text".`);
@@ -99,7 +99,7 @@ export async function getContent(args: Record<string, unknown>): Promise<string>
 
   const offset = Number(args.offset) || 0;
   const maxChars = Number(args.max_chars) || DEFAULT_MAX_CHARS;
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
 
   let content: string;
   let elements = 0;
@@ -109,14 +109,14 @@ export async function getContent(args: Record<string, unknown>): Promise<string>
   let endOffset: number | undefined;
 
   if (mode === "tree") {
-    const cdp = await getCDPSession();
+    const cdp = await getCDPSession(sessionId!);
     const tree = await fetchAccessibilityTree(cdp, { maxChars: maxChars, offset });
     content = tree.content;
     truncated = tree.truncated;
     hasMore = tree.hasMore;
     total = tree.totalElements;
     endOffset = tree.endIndex;
-    updateElementMap(tree.elements);
+    updateElementMap(sessionId!, tree.elements);
     elements = tree.elements.size;
   } else if (mode === "dom") {
     const selector = (args.selector as string) || undefined;

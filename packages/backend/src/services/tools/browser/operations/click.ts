@@ -15,25 +15,25 @@ export async function click(args: Record<string, unknown>, sessionId?: string): 
   const button = (args.button as "left" | "right" | "middle") || "left";
   const clickCount = Number(args.click_count) || 1;
 
-  const page = await getBrowserPage();
+  const page = await getBrowserPage(sessionId!);
   let x: number;
   let y: number;
   let elementRole: string | undefined;
   let elementName: string | undefined;
 
   if (elementIndex !== undefined) {
-    const el = resolveElement(elementIndex);
+    const el = resolveElement(sessionId!, elementIndex);
     elementRole = el.role;
     elementName = el.name;
 
     // Scroll element into view with human-like behavior
-    const coords = await scrollElementIntoView(el.backendDOMNodeId);
+    const coords = await scrollElementIntoView(el.backendDOMNodeId, sessionId);
     if (!coords) {
       throw new StaleElementError(elementIndex);
     }
 
     // Verify element still exists right before clicking (minimizes time gap)
-    const exists = await verifyElementExists(el.backendDOMNodeId);
+    const exists = await verifyElementExists(sessionId!, el.backendDOMNodeId);
     if (!exists) {
       throw new StaleElementError(elementIndex);
     }
